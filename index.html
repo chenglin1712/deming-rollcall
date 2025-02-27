@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>宿舍點名系統</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>宿舍點名系統</h1>
+      </header>
+
+      <main>
+        <section class="card">
+          <h2>選擇點名群組</h2>
+          <div class="group-selection">
+            <div
+              class="group-card"
+              onclick="location.href='attendance.html?group=德明國際生男'"
+            >
+              <h3>德明國際生男</h3>
+              <p>點擊進行點名</p>
+            </div>
+            <div
+              class="group-card"
+              onclick="location.href='attendance.html?group=德銘國際生女'"
+            >
+              <h3>德銘國際生女</h3>
+              <p>點擊進行點名</p>
+            </div>
+            <div
+              class="group-card"
+              onclick="location.href='attendance.html?group=德銘男4樓'"
+            >
+              <h3>德銘男4樓</h3>
+              <p>點擊進行點名</p>
+            </div>
+            <div
+              class="group-card"
+              onclick="location.href='attendance.html?group=德銘男5樓'"
+            >
+              <h3>德銘男5樓</h3>
+              <p>點擊進行點名</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="action-buttons">
+          <button class="btn primary" onclick="location.href='history.html'">
+            查看歷史紀錄
+          </button>
+          <button
+            class="btn secondary"
+            onclick="location.href='add_student.html'"
+          >
+            新增學生
+          </button>
+        </section>
+      </main>
+
+      <footer>
+        <p>© 2025 宿舍點名系統</p>
+      </footer>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

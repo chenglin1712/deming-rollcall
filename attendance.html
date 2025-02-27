@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>學生點名 - 宿舍點名系統</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>學生點名</h1>
+        <h2 id="group-title">群組名稱</h2>
+        <p>日期: <span id="current-date"></span></p>
+      </header>
+
+      <main>
+        <section class="attendance-form">
+          <div class="form-header">
+            <div class="form-row header">
+              <div class="col">房號-樓層床位</div>
+              <div class="col">姓名</div>
+              <div class="col status">狀態</div>
+            </div>
+          </div>
+
+          <div id="student-list" class="form-body">
+            <!-- 學生列表會通過JavaScript動態生成 -->
+          </div>
+
+          <div class="form-footer">
+            <button id="submit-btn" class="btn primary">提交點名</button>
+            <button class="btn secondary" onclick="location.href='index.html'">
+              返回首頁
+            </button>
+          </div>
+        </section>
+      </main>
+
+      <footer>
+        <p>© 2025 宿舍點名系統</p>
+      </footer>
+    </div>
+
+    <template id="student-row-template">
+      <div class="form-row student-row">
+        <div class="col room-number"></div>
+        <div class="col student-name"></div>
+        <div class="col status">
+          <label class="radio-container">
+            <input type="radio" name="" value="在寢" />
+            <span class="radio-label">在寢</span>
+          </label>
+          <label class="radio-container">
+            <input type="radio" name="" value="未歸" />
+            <span class="radio-label">未歸</span>
+          </label>
+          <label class="radio-container">
+            <input type="radio" name="" value="晚歸" />
+            <span class="radio-label">晚歸</span>
+          </label>
+        </div>
+      </div>
+    </template>
+
+    <script src="attendance.js"></script>
+  </body>
+</html>
