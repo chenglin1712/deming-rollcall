@@ -31,7 +31,7 @@ document.addEventListener("DOMContentLoaded", function () {
 });
 
 function loadStudents(groupName) {
-  const backendURL = "http://localhost:3000"; // 明確指定 API 位置
+  const backendURL = "http://192.168.0.115:3000"; // 明確指定 API 位置
 
   fetch(`${backendURL}/api/students?group=${encodeURIComponent(groupName)}`)
     .then((response) => response.json())
