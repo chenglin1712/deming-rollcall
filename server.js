@@ -8,6 +8,7 @@ const ExcelJS = require("exceljs");
 
 const app = express();
 const port = process.env.PORT || 3000;
+const host = process.env.HOST || "0.0.0.0"; // 允許從 .env 設定 IP，預設允許所有設備
 
 app.use(cors());
 
@@ -79,7 +80,7 @@ app.get("/api/students", (req, res) => {
   });
 });
 
-// 啟動伺服器
-app.listen(port, () => {
-  console.log(`🚀 伺服器運行於 http://localhost:${port}`);
+// 啟動伺服器，允許所有設備存取
+app.listen(port, host, () => {
+  console.log(`🚀 伺服器運行於 http://${host}:${port}`);
 });
