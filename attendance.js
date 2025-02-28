@@ -31,10 +31,20 @@ document.addEventListener("DOMContentLoaded", function () {
 });
 
 function loadStudents(groupName) {
-  const backendURL = "http://192.168.0.115:3000"; // 明確指定 API 位置
+  // **自動偵測 API URL**
+  const backendURL = window.location.origin.includes("ngrok-free.app")
+    ? window.location.origin
+    : "http://192.168.0.115:3000"; // 根據當前網址選擇 API 來源
+
+  console.log("🌍 API 請求網址:", backendURL);
 
   fetch(`${backendURL}/api/students?group=${encodeURIComponent(groupName)}`)
-    .then((response) => response.json())
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error(`❌ API 回應錯誤: ${response.status}`);
+      }
+      return response.json();
+    })
     .then((students) => {
       console.log("✅ API 回傳的學生資料:", students);
       if (!students || students.length === 0) {
@@ -48,7 +58,7 @@ function loadStudents(groupName) {
       console.error("❌ 載入學生數據時出錯:", error);
       document.getElementById(
         "student-list"
-      ).innerHTML = `<div class="error-message">載入學生列表失敗，請確認資料庫連接正常。</div>`;
+      ).innerHTML = `<div class="error-message">載入學生列表失敗，請確認 API 連線正常。</div>`;
     });
 }
 
