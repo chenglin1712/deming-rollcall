@@ -1,6 +1,6 @@
 document.addEventListener("DOMContentLoaded", function () {
   const urlParams = new URLSearchParams(window.location.search);
-  let groupName = urlParams.get("group");
+  const groupName = urlParams.get("group");
 
   if (!groupName) {
     console.warn("⚠️ 未提供群組名稱，請檢查 URL 是否正確");
@@ -13,52 +13,33 @@ document.addEventListener("DOMContentLoaded", function () {
   console.log("✅ 選擇的群組名稱:", groupName);
   document.getElementById("group-title").textContent = groupName;
 
-  const currentDate = new Date();
-  const dateOptions = {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-    weekday: "long",
-  };
-  document.getElementById("current-date").textContent =
-    currentDate.toLocaleDateString("zh-TW", dateOptions);
+  // 設定當前日期
+  const currentDate = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+  document.getElementById("current-date").textContent = currentDate;
 
   loadStudents(groupName);
 
-  document
-    .getElementById("submit-btn")
-    .addEventListener("click", submitAttendance);
+  document.getElementById("submit-btn").addEventListener("click", () => {
+    submitAttendance(groupName, currentDate);
+  });
 });
 
 function loadStudents(groupName) {
-  // **自動偵測 API URL**
-  const backendURL = window.location.origin.includes("ngrok-free.app")
-    ? window.location.origin
-    : "http://192.168.0.115:3000"; // 根據當前網址選擇 API 來源
-
-  console.log("🌍 API 請求網址:", backendURL);
-
-  fetch(`${backendURL}/api/students?group=${encodeURIComponent(groupName)}`)
-    .then((response) => {
-      if (!response.ok) {
-        throw new Error(`❌ API 回應錯誤: ${response.status}`);
-      }
-      return response.json();
-    })
+  fetch(`/api/students/all?group=${encodeURIComponent(groupName)}`)
+    .then((response) => response.json())
     .then((students) => {
-      console.log("✅ API 回傳的學生資料:", students);
+      console.log("✅ 取得的學生名單:", students);
       if (!students || students.length === 0) {
         document.getElementById("student-list").innerHTML =
-          '<div class="empty-message">此群組沒有學生數據</div>';
+          '<div class="empty-message">⚠️ 此群組沒有學生數據</div>';
         return;
       }
       displayStudents(students);
     })
     .catch((error) => {
       console.error("❌ 載入學生數據時出錯:", error);
-      document.getElementById(
-        "student-list"
-      ).innerHTML = `<div class="error-message">載入學生列表失敗，請確認 API 連線正常。</div>`;
+      document.getElementById("student-list").innerHTML =
+        '<div class="error-message">⚠️ 無法載入學生列表，請確認 API 連線正常。</div>';
     });
 }
 
@@ -66,30 +47,58 @@ function displayStudents(students) {
   const studentList = document.getElementById("student-list");
   const template = document.getElementById("student-row-template");
 
-  if (!template) {
-    console.error(
-      "❌ 找不到 #student-row-template，請確認 attendance.html 是否正確"
-    );
-    return;
-  }
-
-  studentList.innerHTML = "";
+  studentList.innerHTML = ""; // 清空內容
 
   students.forEach((student) => {
-    console.log("📝 處理學生:", student);
     const row = template.content.cloneNode(true);
 
     row.querySelector(".room-number").textContent = student.roomNumber;
     row.querySelector(".student-name").textContent = student.name;
 
     const radioName = `status-${student.id}`;
-    const radioButtons = row.querySelectorAll('input[type="radio"]');
-    radioButtons.forEach((radio) => {
+    row.querySelectorAll('input[type="radio"]').forEach((radio) => {
       radio.name = radioName;
       radio.dataset.studentId = student.id;
     });
 
-    row.querySelector('input[value="在寢"]').checked = true;
+    row.querySelector('input[value="在寢"]').checked = true; // 預設選擇「在寢」
     studentList.appendChild(row);
   });
+
+  console.log("✅ 學生列表成功渲染！");
+}
+
+function submitAttendance(groupName, date) {
+  const attendanceData = [];
+
+  document.querySelectorAll(".student-row").forEach((row) => {
+    const studentId = row.querySelector('input[type="radio"]').dataset
+      .studentId;
+    const status = row.querySelector('input[type="radio"]:checked').value;
+    attendanceData.push({ student_id: studentId, status });
+  });
+
+  if (attendanceData.length === 0) {
+    alert("⚠️ 沒有學生資料可提交！");
+    return;
+  }
+
+  fetch("/api/attendance/submit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ date, group: groupName, attendanceData }),
+  })
+    .then((response) => response.json())
+    .then((data) => {
+      if (data.success) {
+        alert("✅ 點名成功！");
+        window.location.href = "index.html";
+      } else {
+        alert("❌ 點名失敗，請稍後重試！");
+      }
+    })
+    .catch((error) => {
+      console.error("❌ 點名提交失敗:", error);
+      alert("⚠️ 伺服器錯誤，無法提交點名！");
+    });
 }

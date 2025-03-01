@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>登入 - 宿舍點名系統</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>宿舍點名系統 - 登入</h1>
+      </header>
+      <main>
+        <section class="card">
+          <h2>請輸入帳號與密碼</h2>
+          <form id="login-form">
+            <div class="form-group">
+              <label for="username">帳號：</label>
+              <input type="text" id="username" required />
+            </div>
+            <div class="form-group">
+              <label for="password">密碼：</label>
+              <input type="password" id="password" required />
+            </div>
+            <button type="submit" class="btn primary" id="login-btn">
+              登入
+            </button>
+          </form>
+          <p id="error-message" class="error-message" style="display: none">
+            帳號或密碼錯誤，請重試
+          </p>
+          <p id="loading-message" class="loading-message" style="display: none">
+            登入中，請稍候...
+          </p>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      document.addEventListener("DOMContentLoaded", function () {
+        // 檢查是否已經登入，如果已登入則自動跳轉
+        fetch("/api/check-login")
+          .then((response) => response.json())
+          .then((data) => {
+            if (data.loggedIn) {
+              console.log("✅ 已登入，跳轉至首頁");
+              window.location.href = "index.html";
+            }
+          });
+
+        const loginForm = document.getElementById("login-form");
+        const loginBtn = document.getElementById("login-btn");
+        const errorMessage = document.getElementById("error-message");
+        const loadingMessage = document.getElementById("loading-message");
+
+        loginForm.addEventListener("submit", function (event) {
+          event.preventDefault();
+          const username = document.getElementById("username").value.trim();
+          const password = document.getElementById("password").value.trim();
+
+          if (!username || !password) {
+            errorMessage.textContent = "⚠️ 帳號與密碼不能為空！";
+            errorMessage.style.display = "block";
+            return;
+          }
+
+          // 顯示 Loading，禁用按鈕
+          loginBtn.disabled = true;
+          loadingMessage.style.display = "block";
+          errorMessage.style.display = "none";
+
+          fetch("/api/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ username, password }),
+          })
+            .then((response) => {
+              if (!response.ok) {
+                throw new Error("登入失敗，請檢查帳號密碼！");
+              }
+              return response.json();
+            })
+            .then((data) => {
+              console.log("✅ 登入成功:", data);
+              localStorage.setItem("user", JSON.stringify(data.user));
+              window.location.href = "index.html"; // 成功後跳轉首頁
+            })
+            .catch((error) => {
+              console.error("❌ 登入錯誤:", error);
+              errorMessage.style.display = "block";
+              errorMessage.textContent = "❌ 帳號或密碼錯誤，請重試！";
+            })
+            .finally(() => {
+              // 隱藏 Loading，啟用按鈕
+              loginBtn.disabled = false;
+              loadingMessage.style.display = "none";
+            });
+        });
+      });
+    </script>
+  </body>
+</html>

@@ -10,40 +10,15 @@
     <div class="container">
       <header>
         <h1>宿舍點名系統</h1>
+        <p id="welcome-message">載入中...</p>
+        <button id="logout-btn" class="btn secondary">登出</button>
       </header>
 
       <main>
         <section class="card">
           <h2>選擇點名群組</h2>
-          <div class="group-selection">
-            <div
-              class="group-card"
-              onclick="location.href='attendance.html?group=德明國際生男'"
-            >
-              <h3>德銘國際生男</h3>
-              <p>點擊進行點名</p>
-            </div>
-            <div
-              class="group-card"
-              onclick="location.href='attendance.html?group=德銘國際生女'"
-            >
-              <h3>德銘國際生女</h3>
-              <p>點擊進行點名</p>
-            </div>
-            <div
-              class="group-card"
-              onclick="location.href='attendance.html?group=德銘男4樓'"
-            >
-              <h3>德銘男4樓</h3>
-              <p>點擊進行點名</p>
-            </div>
-            <div
-              class="group-card"
-              onclick="location.href='attendance.html?group=德銘男5樓'"
-            >
-              <h3>德銘男5樓</h3>
-              <p>點擊進行點名</p>
-            </div>
+          <div class="group-selection" id="group-container">
+            <p>正在載入群組...</p>
           </div>
         </section>
 
@@ -71,6 +46,67 @@
       </footer>
     </div>
 
-    <script src="app.js"></script>
+    <script>
+      document.addEventListener("DOMContentLoaded", function () {
+        // **🔍 檢查登入狀態**
+        fetch("/api/check-login")
+          .then((response) => response.json())
+          .then((data) => {
+            if (!data.loggedIn) {
+              console.log("🚫 未登入，跳轉至 login.html");
+              window.location.href = "login.html";
+              return;
+            }
+            document.getElementById(
+              "welcome-message"
+            ).textContent = `👤 歡迎，${data.user.display_name}`;
+
+            // **📌 取得群組列表**
+            fetch("/api/groups")
+              .then((response) => response.json())
+              .then((groups) => {
+                const groupContainer =
+                  document.getElementById("group-container");
+                groupContainer.innerHTML = ""; // 清空舊內容
+                if (groups.length === 0) {
+                  groupContainer.innerHTML = "<p>⚠️ 目前沒有可用的群組。</p>";
+                  return;
+                }
+                groups.forEach((group) => {
+                  let groupCard = document.createElement("div");
+                  groupCard.className = "group-card";
+                  groupCard.onclick = () =>
+                    (location.href = `attendance.html?group=${encodeURIComponent(
+                      group
+                    )}`);
+                  groupCard.innerHTML = `<h3>${group}</h3><p>點擊進行點名</p>`;
+                  groupContainer.appendChild(groupCard);
+                });
+              })
+              .catch((error) => {
+                console.error("❌ 載入群組失敗:", error);
+                document.getElementById("group-container").innerHTML =
+                  "<p>⚠️ 無法載入群組，請稍後重試。</p>";
+              });
+          })
+          .catch((error) => {
+            console.error("❌ 無法確認登入狀態:", error);
+            window.location.href = "login.html";
+          });
+
+        // **🔓 登出功能**
+        document
+          .getElementById("logout-btn")
+          .addEventListener("click", function () {
+            fetch("/api/logout", { method: "POST" })
+              .then((response) => response.json())
+              .then(() => {
+                sessionStorage.removeItem("user");
+                window.location.href = "login.html";
+              })
+              .catch((error) => console.error("❌ 登出失敗:", error));
+          });
+      });
+    </script>
   </body>
 </html>
