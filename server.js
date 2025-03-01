@@ -19,70 +19,58 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 app.use(bodyParser.json());
-app.use(express.static(__dirname)); // 讓 Express 提供靜態檔案
+app.use(express.static(__dirname));
 
-// 連接到 SQLite 資料庫
+// 連接 SQLite 資料庫
 const db = new sqlite3.Database("./dormitory.db", (err) => {
   if (err) {
     console.error("❌ 無法連接到資料庫:", err.message);
   } else {
     console.log("✅ 已連接到 SQLite 資料庫");
-    initDatabase();
   }
 });
 
-// 初始化資料庫
-function initDatabase() {
-  db.run(`CREATE TABLE IF NOT EXISTS students (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        roomNumber TEXT NOT NULL,
-        phoneNumber TEXT NOT NULL,
-        group_name TEXT NOT NULL
-    )`);
-  db.run(`CREATE TABLE IF NOT EXISTS attendance (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        date TEXT NOT NULL,
-        student_id TEXT NOT NULL,
-        status TEXT NOT NULL,
-        FOREIGN KEY (student_id) REFERENCES students (id)
-    )`);
-  console.log("✅ 資料庫表格已初始化");
-}
-
-// 檢查資料庫連接 API
-app.get("/api/check-connection", (req, res) => {
-  db.get("SELECT sqlite_version() as version", (err, row) => {
-    if (err) {
-      return res.json({ connected: false, error: err.message });
+// 取得所有學生群組 API
+app.get("/api/groups", (req, res) => {
+  db.all(
+    "SELECT DISTINCT TRIM(group_name) as group_name FROM students WHERE group_name IS NOT NULL",
+    [],
+    (err, rows) => {
+      if (err) {
+        console.error("❌ 查詢群組名稱錯誤:", err.message);
+        return res.status(500).json({ error: err.message });
+      }
+      res.json(rows.map((row) => row.group_name));
     }
-    res.json({ connected: true, version: row.version });
-  });
+  );
 });
 
-// 獲取學生列表的 API，允許外部設備請求
-app.get("/api/students", (req, res) => {
-  const group = req.query.group;
+// 修正 `/api/students/all` API，確保回傳資料
+app.get("/api/students/all", (req, res) => {
+  let group = req.query.group;
 
   if (!group) {
-    console.warn("⚠️ `group_name` 參數缺失，請檢查請求是否正確");
-    return res.json([]);
+    return res.status(400).json({ error: "請提供 group 參數" });
   }
 
-  console.log("🔍 查詢 `group_name`:", group);
+  group = group.trim();
+  console.log(`📢 查詢群組: '${group}'`);
 
-  const sql =
-    "SELECT id, name, roomNumber, phoneNumber, group_name FROM students WHERE group_name = ?";
-
-  db.all(sql, [group], (err, rows) => {
-    if (err) {
-      console.error("❌ SQL 查詢錯誤:", err.message);
-      return res.status(500).json({ error: err.message });
+  db.all(
+    "SELECT name, roomNumber, phoneNumber FROM students WHERE TRIM(group_name) = TRIM(?) COLLATE NOCASE",
+    [group],
+    (err, rows) => {
+      if (err) {
+        console.error("❌ SQL 查詢錯誤:", err.message);
+        return res.status(500).json({ error: err.message });
+      }
+      console.log(`✅ 查詢成功，找到 ${rows.length} 筆資料`);
+      if (rows.length === 0) {
+        console.warn(`⚠️ 沒有找到任何學生資料`);
+      }
+      res.json(rows);
     }
-
-    console.log("✅ 查詢結果:", rows);
-    res.json(rows);
-  });
+  );
 });
 
 // 讓 `/` 直接載入 `attendance.html`
@@ -93,4 +81,5 @@ app.get("/", (req, res) => {
 // 啟動伺服器
 app.listen(port, host, () => {
   console.log(`🚀 伺服器運行於 http://${host}:${port}`);
+  console.log("📡 啟動 ngrok 後可透過外部設備存取");
 });

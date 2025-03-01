@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>學生清單</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>學生清單</h1>
+      </header>
+
+      <main>
+        <section class="card">
+          <h2>選擇學生群組</h2>
+          <div class="filter-section">
+            <label for="groupSelect">選擇群組：</label>
+            <select id="groupSelect">
+              <option value="">請選擇</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>學生名單</h2>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>姓名</th>
+                  <th>房號</th>
+                  <th>電話</th>
+                </tr>
+              </thead>
+              <tbody id="studentTableBody">
+                <tr>
+                  <td colspan="3">請選擇群組以顯示學生</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="action-buttons">
+          <button class="btn secondary" onclick="location.href='index.html'">
+            返回首頁
+          </button>
+        </section>
+      </main>
+
+      <footer>
+        <p>© 2025 宿舍點名系統</p>
+      </footer>
+    </div>
+
+    <script src="student_list.js"></script>
+  </body>
+</html>
