@@ -10,7 +10,7 @@ const ExcelJS = require("exceljs");
 
 const app = express();
 const port = process.env.PORT || 3000;
-const host = process.env.HOST || "192.168.0.115"; // 伺服器綁定內網 IP
+const host = "0.0.0.0"; // ✅ 允許所有 IP 存取，確保 ngrok 可連接
 
 // 設定 CORS 允許外部設備訪問
 app.use(
