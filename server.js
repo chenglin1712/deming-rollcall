@@ -12,7 +12,6 @@ const app = express();
 const port = process.env.PORT || 3000;
 const host = "0.0.0.0"; // ✅ 允許所有 IP 存取，確保 ngrok 可連接
 
-// 設定 CORS 允許外部設備訪問
 app.use(
   cors({ origin: "*", methods: "GET,POST", allowedHeaders: "Content-Type" })
 );
@@ -36,7 +35,7 @@ const db = new sqlite3.Database("./dormitory.db", (err) => {
   }
 });
 
-// 建立 `users`、`students`、`attendance` 資料表
+// 建立資料表
 db.run(`CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE,
@@ -58,7 +57,7 @@ db.run(`CREATE TABLE IF NOT EXISTS attendance (
     FOREIGN KEY (student_id) REFERENCES students (id)
 )`);
 
-// 預設帳號密碼（密碼加密儲存）
+// 預設帳號
 const users = [
   { username: "xm2801", password: "admin", display_name: "德銘宿舍羅老師" },
   {
@@ -168,7 +167,7 @@ app.get("/api/students/all", requireLogin, (req, res) => {
   }
 
   db.all(
-    "SELECT id, name, roomNumber, phoneNumber FROM students WHERE TRIM(group_name) = TRIM(?) COLLATE NOCASE",
+    "SELECT id, name, roomNumber, phoneNumber, group_name FROM students WHERE TRIM(group_name) = TRIM(?) COLLATE NOCASE",
     [group],
     (err, rows) => {
       if (err) {
@@ -200,10 +199,8 @@ app.post("/api/attendance/submit", requireLogin, (req, res) => {
 // **📌 讓 `/` 直接載入 `login.html`**
 app.get("/", (req, res) => {
   if (req.session.user) {
-    console.log("✅ 已登入，導向 index.html");
     res.redirect("/index.html");
   } else {
-    console.log("🚫 未登入，導向 login.html");
     res.redirect("/login.html");
   }
 });

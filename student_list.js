@@ -24,7 +24,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const group = groupSelect.value;
     if (!group) {
       studentTableBody.innerHTML =
-        "<tr><td colspan='3'>請選擇群組以顯示學生</td></tr>";
+        "<tr><td colspan='4'>請選擇群組以顯示學生</td></tr>";
       return;
     }
 
@@ -34,24 +34,25 @@ document.addEventListener("DOMContentLoaded", () => {
         studentTableBody.innerHTML = ""; // 清空表格
         if (students.length === 0) {
           studentTableBody.innerHTML =
-            "<tr><td colspan='3'>該群組無學生資料</td></tr>";
+            "<tr><td colspan='4'>該群組無學生資料</td></tr>";
           return;
         }
         students.forEach((student) => {
           let row = `
-                        <tr>
-                            <td>${student.name}</td>
-                            <td>${student.roomNumber}</td>
-                            <td>${student.phoneNumber}</td>
-                        </tr>
-                    `;
+            <tr>
+              <td>${student.id}</td> <!-- 確保這裡有 id -->
+              <td>${student.name}</td>
+              <td>${student.roomNumber}</td>
+              <td>${student.phoneNumber}</td>
+            </tr>
+          `;
           studentTableBody.innerHTML += row;
         });
       })
       .catch((error) => {
         console.error("❌ 無法載入學生名單:", error);
         studentTableBody.innerHTML =
-          "<tr><td colspan='3'>載入失敗，請重試</td></tr>";
+          "<tr><td colspan='4'>載入失敗，請重試</td></tr>";
       });
   });
 });
