@@ -162,18 +162,24 @@ app.get("/api/groups", requireLogin, (req, res) => {
 // **📌 取得指定群組的學生**
 app.get("/api/students/all", requireLogin, (req, res) => {
   let group = req.query.group;
+
+  console.log("📌 接收到的 group 參數:", group); // 🔍 記錄傳入的 group
+
   if (!group) {
+    console.warn("⚠️ 缺少 group 參數");
     return res.status(400).json({ error: "請提供 group 參數" });
   }
 
   db.all(
-    "SELECT id, name, roomNumber, phoneNumber, group_name FROM students WHERE TRIM(group_name) = TRIM(?) COLLATE NOCASE",
-    [group],
+    "SELECT id, name, roomNumber, phoneNumber, group_name FROM students WHERE group_name = ? COLLATE NOCASE",
+    [group.trim()],
     (err, rows) => {
       if (err) {
         console.error("❌ SQL 查詢錯誤:", err.message);
         return res.status(500).json({ error: err.message });
       }
+
+      console.log("✅ 查詢結果:", rows); // 🔍 記錄查詢回傳的資料
       res.json(rows);
     }
   );
