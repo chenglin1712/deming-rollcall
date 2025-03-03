@@ -109,3 +109,50 @@ function submitAttendance(groupName, date) {
       alert("⚠️ 伺服器錯誤，無法提交點名！");
     });
 }
+
+// **🔹 新增防止重複點名的點名提交按鈕事件**
+document.getElementById("submitAttendance").addEventListener("click", () => {
+  const date = document.getElementById("attendanceDate").value;
+  const group = document.getElementById("groupSelect").value;
+
+  if (!date || !group) {
+    alert("請選擇日期與群組！");
+    return;
+  }
+
+  const attendanceData = [];
+  document.querySelectorAll(".student-row").forEach((row) => {
+    const studentId = row.dataset.studentId;
+    const studentName = row.querySelector(".student-name").textContent;
+    const status = row.querySelector(
+      "input[name='status-" + studentId + "']:checked"
+    );
+
+    if (!status) {
+      alert("請標記所有學生的點名狀態！");
+      return;
+    }
+
+    attendanceData.push({
+      student_id: studentId,
+      studentName: studentName,
+      status: status.value,
+    });
+  });
+
+  fetch("/api/attendance/submit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ date, group, attendanceData }),
+  })
+    .then((res) => res.json())
+    .then((data) => {
+      if (data.error) {
+        alert(`⚠️ 部分學生已點名: ${data.duplicated.join(", ")}`);
+      } else {
+        alert("✅ 點名成功！");
+        window.location.reload(); // 重新整理頁面
+      }
+    })
+    .catch((error) => console.error("❌ 點名提交錯誤:", error));
+});

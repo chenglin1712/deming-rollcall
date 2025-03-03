@@ -164,7 +164,7 @@ app.get("/api/groups", requireLogin, (req, res) => {
 app.get("/api/students/all", requireLogin, (req, res) => {
   let group = req.query.group;
 
-  console.log("📌 接收到的 group 參數:", group); // 🔍 記錄傳入的 group
+  console.log("📌 接收到的 group 參數:", group);
 
   if (!group) {
     console.warn("⚠️ 缺少 group 參數");
@@ -180,15 +180,16 @@ app.get("/api/students/all", requireLogin, (req, res) => {
         return res.status(500).json({ error: err.message });
       }
 
-      console.log("✅ 查詢結果:", rows); // 🔍 記錄查詢回傳的資料
+      console.log("✅ 查詢結果:", rows);
       res.json(rows);
     }
   );
 });
 
-// **📌 提交點名 API**
+// **📌 提交點名 API（防止重複點名）**
 app.post("/api/attendance/submit", requireLogin, (req, res) => {
   const { date, group, attendanceData } = req.body;
+
   if (!date || !group || !attendanceData || !Array.isArray(attendanceData)) {
     return res.status(400).json({ error: "請提供完整的點名資料" });
   }
@@ -197,27 +198,44 @@ app.post("/api/attendance/submit", requireLogin, (req, res) => {
     "INSERT INTO attendance (date, student_id, studentName, status) VALUES (?, ?, ?, ?)"
   );
 
-  attendanceData.forEach(({ student_id, studentName, status }) => {
-    stmt.run(date, student_id, studentName, status);
+  let duplicateCheckPromises = attendanceData.map(({ student_id }) => {
+    return new Promise((resolve, reject) => {
+      db.get(
+        "SELECT * FROM attendance WHERE date = ? AND student_id = ?",
+        [date, student_id],
+        (err, row) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(row);
+          }
+        }
+      );
+    });
   });
 
-  stmt.finalize();
-  res.json({ success: true, message: "點名成功" });
-});
+  Promise.all(duplicateCheckPromises)
+    .then((results) => {
+      const alreadyMarked = results.filter((r) => r !== undefined);
 
-// **📌 查詢點名紀錄 API**
-app.get("/api/attendance", requireLogin, (req, res) => {
-  db.all(
-    "SELECT id, date, student_id, studentName, status FROM attendance ORDER BY date DESC",
-    [],
-    (err, rows) => {
-      if (err) {
-        console.error("❌ 查詢點名紀錄錯誤:", err.message);
-        return res.status(500).json({ error: err.message });
+      if (alreadyMarked.length > 0) {
+        return res.status(400).json({
+          error: "部分學生已經點名，請勿重複點名！",
+          duplicated: alreadyMarked.map((r) => r.studentName),
+        });
       }
-      res.json(rows);
-    }
-  );
+
+      attendanceData.forEach(({ student_id, studentName, status }) => {
+        stmt.run(date, student_id, studentName, status);
+      });
+
+      stmt.finalize();
+      res.json({ success: true, message: "點名成功！" });
+    })
+    .catch((err) => {
+      console.error("❌ 查詢點名紀錄錯誤:", err);
+      res.status(500).json({ error: "點名過程中發生錯誤" });
+    });
 });
 
 // **📌 讓 `/` 直接載入 `login.html`**
