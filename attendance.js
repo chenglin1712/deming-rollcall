@@ -59,6 +59,7 @@ function displayStudents(students) {
     row.querySelectorAll('input[type="radio"]').forEach((radio) => {
       radio.name = radioName;
       radio.dataset.studentId = student.id;
+      radio.dataset.studentName = student.name; // 新增學生姓名 dataset
     });
 
     row.querySelector('input[value="在寢"]').checked = true; // 預設選擇「在寢」
@@ -74,8 +75,14 @@ function submitAttendance(groupName, date) {
   document.querySelectorAll(".student-row").forEach((row) => {
     const studentId = row.querySelector('input[type="radio"]').dataset
       .studentId;
+    const studentName = row.querySelector(".student-name").textContent.trim(); // 取得學生姓名
     const status = row.querySelector('input[type="radio"]:checked').value;
-    attendanceData.push({ student_id: studentId, status });
+
+    attendanceData.push({
+      student_id: studentId,
+      studentName: studentName,
+      status,
+    });
   });
 
   if (attendanceData.length === 0) {

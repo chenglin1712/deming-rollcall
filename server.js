@@ -53,6 +53,7 @@ db.run(`CREATE TABLE IF NOT EXISTS attendance (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     date TEXT,
     student_id INTEGER,
+    studentName TEXT,
     status TEXT,
     FOREIGN KEY (student_id) REFERENCES students (id)
 )`);
@@ -192,14 +193,31 @@ app.post("/api/attendance/submit", requireLogin, (req, res) => {
     return res.status(400).json({ error: "請提供完整的點名資料" });
   }
 
-  attendanceData.forEach(({ student_id, status }) => {
-    db.run(
-      "INSERT INTO attendance (date, student_id, status) VALUES (?, ?, ?)",
-      [date, student_id, status]
-    );
+  const stmt = db.prepare(
+    "INSERT INTO attendance (date, student_id, studentName, status) VALUES (?, ?, ?, ?)"
+  );
+
+  attendanceData.forEach(({ student_id, studentName, status }) => {
+    stmt.run(date, student_id, studentName, status);
   });
 
+  stmt.finalize();
   res.json({ success: true, message: "點名成功" });
+});
+
+// **📌 查詢點名紀錄 API**
+app.get("/api/attendance", requireLogin, (req, res) => {
+  db.all(
+    "SELECT id, date, student_id, studentName, status FROM attendance ORDER BY date DESC",
+    [],
+    (err, rows) => {
+      if (err) {
+        console.error("❌ 查詢點名紀錄錯誤:", err.message);
+        return res.status(500).json({ error: err.message });
+      }
+      res.json(rows);
+    }
+  );
 });
 
 // **📌 讓 `/` 直接載入 `login.html`**
