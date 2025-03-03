@@ -6,15 +6,24 @@ const path = require("path");
 const cors = require("cors");
 const bcrypt = require("bcrypt");
 const session = require("express-session");
-const ExcelJS = require("exceljs");
+const cookieParser = require("cookie-parser");
 
 const app = express();
 const port = process.env.PORT || 3000;
-const host = "0.0.0.0"; // ✅ 允許所有 IP 存取，確保 ngrok 可連接
+const host = "0.0.0.0"; // ✅ 允許所有 IP 存取
 
+app.use(cookieParser()); // ✅ 解析 cookie
+
+// ✅ 修正 CORS，確保跨網域 session 有效
 app.use(
-  cors({ origin: "*", methods: "GET,POST", allowedHeaders: "Content-Type" })
+  cors({
+    origin: "*", // ✅ 允許任何來源（適用於外網）
+    methods: "GET,POST,OPTIONS",
+    allowedHeaders: "Content-Type",
+    credentials: true, // ✅ 允許攜帶 session
+  })
 );
+
 app.use(bodyParser.json());
 app.use(express.static(__dirname));
 
@@ -23,6 +32,11 @@ app.use(
     secret: "secret_key",
     resave: false,
     saveUninitialized: false,
+    cookie: {
+      secure: false, // ✅ `false` 避免 HTTP 無法存取 session
+      httpOnly: true,
+      maxAge: 24 * 60 * 60 * 1000, // ✅ 確保 session 存活 24 小時
+    },
   })
 );
 
@@ -35,30 +49,7 @@ const db = new sqlite3.Database("./dormitory.db", (err) => {
   }
 });
 
-// 建立資料表
-db.run(`CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE,
-    password TEXT,
-    display_name TEXT
-)`);
-db.run(`CREATE TABLE IF NOT EXISTS students (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT,
-    roomNumber TEXT,
-    phoneNumber TEXT,
-    group_name TEXT
-)`);
-db.run(`CREATE TABLE IF NOT EXISTS attendance (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    date TEXT,
-    student_id INTEGER,
-    studentName TEXT,
-    status TEXT,
-    FOREIGN KEY (student_id) REFERENCES students (id)
-)`);
-
-// 預設帳號
+// **📌 預設帳號**
 const users = [
   { username: "xm2801", password: "admin", display_name: "德銘宿舍羅老師" },
   {
@@ -84,7 +75,7 @@ users.forEach((user) => {
 const requireLogin = (req, res, next) => {
   if (!req.session.user) {
     console.log("🚫 未登入，重定向至 login.html");
-    return res.redirect("/login.html");
+    return res.status(401).json({ success: false, message: "未登入" }); // ✅ 修改為 401，避免前端錯誤
   }
   next();
 };
@@ -111,7 +102,9 @@ app.post("/api/login", (req, res) => {
           display_name: user.display_name,
         };
         console.log("✅ 使用者登入成功:", req.session.user);
-        res.json({ success: true, user: req.session.user });
+        req.session.save(() => {
+          res.json({ success: true, user: req.session.user });
+        });
       } else {
         res.status(401).json({ success: false, message: "帳號或密碼錯誤" });
       }
@@ -119,33 +112,36 @@ app.post("/api/login", (req, res) => {
   });
 });
 
-// **🔐 登出 API**
-app.post("/api/logout", (req, res) => {
-  req.session.destroy(() => {
-    res.json({ success: true, message: "已成功登出" });
-  });
-});
-
-// **🔍 驗證登入狀態 API**
+// **📌 確認登入狀態 API**
 app.get("/api/check-login", (req, res) => {
+  console.log("🔍 session 狀態:", req.session.user);
   res.json({ loggedIn: !!req.session.user, user: req.session.user });
 });
 
-// **📌 受保護頁面**
-const protectedPages = [
-  "add_student.html",
-  "attendance.html",
-  "history.html",
-  "index.html",
-  "student_list.html",
-];
-protectedPages.forEach((page) => {
-  app.get(`/${page}`, requireLogin, (req, res) => {
-    res.sendFile(path.join(__dirname, page));
-  });
+// **📌 取得學生列表 API**
+app.get("/api/students/all", requireLogin, (req, res) => {
+  const groupName = req.query.group;
+  if (!groupName) {
+    return res.status(400).json({ error: "缺少群組名稱" });
+  }
+
+  db.all(
+    "SELECT id, name, roomNumber FROM students WHERE TRIM(group_name) = ?",
+    [groupName.trim()],
+    (err, rows) => {
+      if (err) {
+        console.error("❌ 查詢學生名單失敗:", err.message);
+        return res.status(500).json({ error: "無法取得學生名單" });
+      }
+      if (rows.length === 0) {
+        console.warn(`⚠️ 群組 '${groupName}' 沒有學生資料`);
+      }
+      res.json(rows);
+    }
+  );
 });
 
-// **📌 取得所有學生群組 API**
+// **📌 取得點名群組 API**
 app.get("/api/groups", requireLogin, (req, res) => {
   db.all(
     "SELECT DISTINCT TRIM(group_name) as group_name FROM students WHERE group_name IS NOT NULL",
@@ -160,33 +156,43 @@ app.get("/api/groups", requireLogin, (req, res) => {
   );
 });
 
-// **📌 取得指定群組的學生**
-app.get("/api/students/all", requireLogin, (req, res) => {
-  let group = req.query.group;
-
-  console.log("📌 接收到的 group 參數:", group);
-
-  if (!group) {
-    console.warn("⚠️ 缺少 group 參數");
-    return res.status(400).json({ error: "請提供 group 參數" });
-  }
-
+// **📌 取得歷史點名紀錄 API**
+app.get("/api/attendance/history", requireLogin, (req, res) => {
   db.all(
-    "SELECT id, name, roomNumber, phoneNumber, group_name FROM students WHERE group_name = ? COLLATE NOCASE",
-    [group.trim()],
-    (err, rows) => {
+    `SELECT attendance.date, attendance.student_id, attendance.studentName, attendance.status, students.roomNumber 
+     FROM attendance 
+     LEFT JOIN students ON attendance.student_id = students.id
+     ORDER BY attendance.date DESC`,
+    [],
+    (err, records) => {
       if (err) {
-        console.error("❌ SQL 查詢錯誤:", err.message);
-        return res.status(500).json({ error: err.message });
+        return res
+          .status(500)
+          .json({ success: false, message: "❌ 無法取得歷史紀錄" });
       }
-
-      console.log("✅ 查詢結果:", rows);
-      res.json(rows);
+      res.json({ success: true, data: records });
     }
   );
 });
 
-// **📌 提交點名 API（防止重複點名）**
+// **📌 取得可選的點名日期**
+app.get("/api/attendance/dates", requireLogin, (req, res) => {
+  db.all(
+    `SELECT DISTINCT date FROM attendance ORDER BY date DESC`,
+    [],
+    (err, rows) => {
+      if (err) {
+        console.error("❌ 無法取得歷史日期:", err.message);
+        return res
+          .status(500)
+          .json({ success: false, message: "無法取得歷史日期" });
+      }
+      res.json(rows.map((row) => row.date));
+    }
+  );
+});
+
+// **📌 修正點名提交 API**
 app.post("/api/attendance/submit", requireLogin, (req, res) => {
   const { date, group, attendanceData } = req.body;
 
@@ -195,53 +201,45 @@ app.post("/api/attendance/submit", requireLogin, (req, res) => {
   }
 
   const stmt = db.prepare(
-    "INSERT INTO attendance (date, student_id, studentName, status) VALUES (?, ?, ?, ?)"
+    "INSERT INTO attendance (date, student_id, studentName, status, roomNumber) VALUES (?, ?, ?, ?, ?)"
   );
 
-  let duplicateCheckPromises = attendanceData.map(({ student_id }) => {
-    return new Promise((resolve, reject) => {
-      db.get(
-        "SELECT * FROM attendance WHERE date = ? AND student_id = ?",
-        [date, student_id],
-        (err, row) => {
-          if (err) {
-            reject(err);
-          } else {
-            resolve(row);
-          }
+  attendanceData.forEach(({ student_id, studentName, status }) => {
+    db.get(
+      "SELECT roomNumber FROM students WHERE id = ?",
+      [student_id],
+      (err, row) => {
+        if (err || !row) {
+          stmt.run(date, student_id, studentName, status, "N/A"); // 如果找不到房號則顯示 "N/A"
+        } else {
+          stmt.run(date, student_id, studentName, status, row.roomNumber);
         }
-      );
-    });
+      }
+    );
   });
 
-  Promise.all(duplicateCheckPromises)
-    .then((results) => {
-      const alreadyMarked = results.filter((r) => r !== undefined);
-
-      if (alreadyMarked.length > 0) {
-        return res.status(400).json({
-          error: "部分學生已經點名，請勿重複點名！",
-          duplicated: alreadyMarked.map((r) => r.studentName),
-        });
-      }
-
-      attendanceData.forEach(({ student_id, studentName, status }) => {
-        stmt.run(date, student_id, studentName, status);
-      });
-
-      stmt.finalize();
-      res.json({ success: true, message: "點名成功！" });
-    })
-    .catch((err) => {
-      console.error("❌ 查詢點名紀錄錯誤:", err);
-      res.status(500).json({ error: "點名過程中發生錯誤" });
-    });
+  stmt.finalize();
+  res.json({ success: true, message: "點名成功！" });
 });
 
-// **📌 讓 `/` 直接載入 `login.html`**
+// **📌 修正受保護頁面**
+const protectedPages = [
+  "add_student.html",
+  "attendance.html",
+  "history.html",
+  "index.html",
+  "student_list.html",
+];
+protectedPages.forEach((page) => {
+  app.get(`/${page}`, requireLogin, (req, res) => {
+    res.sendFile(path.join(__dirname, page));
+  });
+});
+
+// **📌 修正登入後跳轉 `index.html`**
 app.get("/", (req, res) => {
   if (req.session.user) {
-    res.redirect("/index.html");
+    res.sendFile(path.join(__dirname, "index.html"));
   } else {
     res.redirect("/login.html");
   }
