@@ -202,42 +202,70 @@ app.post("/api/attendance/submit", requireLogin, (req, res) => {
   }
 
   db.serialize(() => {
-    const stmt = db.prepare(
-      "INSERT INTO attendance (date, student_id, studentName, status, roomNumber) VALUES (?, ?, ?, ?, ?)"
-    );
-
     let errors = [];
+    let alreadyMarked = [];
     let completed = 0;
 
-    attendanceData.forEach(({ student_id, studentName, status }) => {
-      db.get(
-        "SELECT roomNumber FROM students WHERE id = ?",
-        [student_id],
-        (err, row) => {
-          if (err || !row) {
-            errors.push(student_id);
-            stmt.run(date, student_id, studentName, status, "N/A");
-          } else {
-            stmt.run(date, student_id, studentName, status, row.roomNumber);
-          }
-          completed++;
-
-          if (completed === attendanceData.length) {
-            stmt.finalize();
-            if (errors.length > 0) {
-              res.status(207).json({
-                success: true,
-                message: `✅ 點名成功，但學生 ID (${errors.join(
-                  ", "
-                )}) 未找到房號，已存為 "N/A"。`,
-              });
-            } else {
-              res.json({ success: true, message: "✅ 點名成功！" });
-            }
-          }
+    // 檢查哪些學生已經點過名
+    const studentIds = attendanceData.map(({ student_id }) => student_id);
+    db.all(
+      `SELECT student_id FROM attendance WHERE date = ? AND student_id IN (${studentIds
+        .map(() => "?")
+        .join(",")})`,
+      [date, ...studentIds],
+      (err, rows) => {
+        if (err) {
+          return res.status(500).json({ error: "❌ 無法檢查點名狀態" });
         }
-      );
-    });
+
+        // 取得已點名的 student_id
+        alreadyMarked = rows.map((row) => row.student_id);
+
+        // 過濾出尚未點名的學生
+        const newAttendance = attendanceData.filter(
+          ({ student_id }) => !alreadyMarked.includes(student_id)
+        );
+
+        if (newAttendance.length === 0) {
+          return res.status(409).json({ error: "❌ 已完成點名，請洽系統管理" });
+        }
+
+        // 準備插入點名紀錄
+        const stmt = db.prepare(
+          "INSERT INTO attendance (date, student_id, studentName, status, roomNumber) VALUES (?, ?, ?, ?, ?)"
+        );
+
+        newAttendance.forEach(({ student_id, studentName, status }) => {
+          db.get(
+            "SELECT roomNumber FROM students WHERE id = ?",
+            [student_id],
+            (err, row) => {
+              if (err || !row) {
+                errors.push(student_id);
+                stmt.run(date, student_id, studentName, status, "N/A");
+              } else {
+                stmt.run(date, student_id, studentName, status, row.roomNumber);
+              }
+              completed++;
+
+              if (completed === newAttendance.length) {
+                stmt.finalize();
+                if (errors.length > 0) {
+                  res.status(207).json({
+                    success: true,
+                    message: `✅ 點名成功，但學生 ID (${errors.join(
+                      ", "
+                    )}) 未找到房號，已存為 "N/A"。`,
+                  });
+                } else {
+                  res.json({ success: true, message: "✅ 點名成功！" });
+                }
+              }
+            }
+          );
+        });
+      }
+    );
   });
 });
 
