@@ -9,12 +9,15 @@ document.addEventListener("DOMContentLoaded", function () {
   document
     .getElementById("export-btn")
     .addEventListener("click", exportToExcel);
+  document
+    .getElementById("export-csv-btn")
+    .addEventListener("click", exportToCSV); // 加入 CSV 匯出按鈕事件
 
   // 頁面加載時直接顯示所有歷史紀錄
   loadHistoryData();
 });
 
-// **🔹 修正 1️⃣：載入歷史點名日期，避免報錯**
+// **🔹 載入歷史點名日期**
 function loadDateOptions() {
   fetch("/api/attendance/dates")
     .then((response) => {
@@ -25,16 +28,12 @@ function loadDateOptions() {
     })
     .then((dates) => {
       const dateSelect = document.getElementById("date-select");
-
-      // 清空現有選項（保留預設選項）
       dateSelect.innerHTML = '<option value="">--- 請選擇日期 ---</option>';
 
-      // 添加日期選項
       dates.forEach((date) => {
         const option = document.createElement("option");
         option.value = date;
 
-        // 格式化日期顯示
         const formattedDate = new Date(date).toLocaleDateString("zh-TW", {
           year: "numeric",
           month: "long",
@@ -48,12 +47,11 @@ function loadDateOptions() {
     })
     .catch((error) => {
       console.error("載入歷史日期時出錯:", error);
-      // **修正：避免直接報錯，讓頁面正常運作**
       alert("⚠️ 無法載入歷史日期，請稍後再試，但你仍可瀏覽點名紀錄。");
     });
 }
 
-// **🔹 修正 3️⃣：根據篩選條件載入歷史數據**
+// **🔹 載入歷史數據**
 function loadHistoryData() {
   const date = document.getElementById("date-select").value;
   const group = document.getElementById("group-select").value;
@@ -61,23 +59,15 @@ function loadHistoryData() {
   let apiUrl = "/api/attendance/history";
   const queryParams = [];
 
-  if (date) {
-    queryParams.push(`date=${encodeURIComponent(date)}`);
-  }
-  if (group) {
-    queryParams.push(`group=${encodeURIComponent(group)}`);
-  }
-  if (queryParams.length > 0) {
-    apiUrl += "?" + queryParams.join("&");
-  }
+  if (date) queryParams.push(`date=${encodeURIComponent(date)}`);
+  if (group) queryParams.push(`group=${encodeURIComponent(group)}`);
+  if (queryParams.length > 0) apiUrl += "?" + queryParams.join("&");
 
   fetch(apiUrl)
     .then((response) => response.json())
     .then((data) => {
-      console.log("API 回應資料:", data); // **用於除錯**
-      if (!data.success) {
-        throw new Error("API 回傳失敗");
-      }
+      console.log("API 回應資料:", data);
+      if (!data.success) throw new Error("API 回傳失敗");
       displayHistoryData(data.data);
     })
     .catch((error) => {
@@ -86,10 +76,10 @@ function loadHistoryData() {
     });
 }
 
-// **🔹 修正 2️⃣：修正欄位對應**
+// **🔹 顯示歷史數據**
 function displayHistoryData(records) {
   const tableBody = document.getElementById("history-data");
-  tableBody.innerHTML = ""; // **清空舊數據**
+  tableBody.innerHTML = "";
 
   if (records.length === 0) {
     const emptyRow = document.createElement("tr");
@@ -104,15 +94,13 @@ function displayHistoryData(records) {
 
   records.forEach((record) => {
     const row = document.createElement("tr");
-
     const formattedDate = new Date(record.date).toLocaleDateString("zh-TW");
 
-    // **修正欄位名稱，確保匹配 API 回傳的資料**
     const cells = [
-      formattedDate, // 日期
-      record.roomNumber || "N/A", // 房號（如果 API 沒有，則顯示 "N/A"）
-      record.studentName, // 學生姓名
-      record.status, // 狀態 (在寢 / 未歸)
+      formattedDate,
+      record.roomNumber || "N/A",
+      record.studentName,
+      record.status,
     ];
 
     cells.forEach((text) => {
@@ -121,18 +109,14 @@ function displayHistoryData(records) {
       row.appendChild(cell);
     });
 
-    // **根據狀態設定不同的樣式**
-    if (record.status === "未歸") {
-      row.classList.add("status-absent");
-    } else if (record.status === "晚歸") {
-      row.classList.add("status-late");
-    }
+    if (record.status === "未歸") row.classList.add("status-absent");
+    else if (record.status === "晚歸") row.classList.add("status-late");
 
     tableBody.appendChild(row);
   });
 }
 
-// **🔹 匯出資料為 Excel**
+// **🔹 匯出為 Excel**
 function exportToExcel() {
   const date = document.getElementById("date-select").value;
   const group = document.getElementById("group-select").value;
@@ -142,12 +126,32 @@ function exportToExcel() {
     return;
   }
 
-  // **構建匯出 API 查詢參數**
   let exportUrl = `/api/attendance/export?date=${encodeURIComponent(date)}`;
-  if (group) {
-    exportUrl += `&group=${encodeURIComponent(group)}`;
+  if (group) exportUrl += `&group=${encodeURIComponent(group)}`;
+
+  window.location.href = exportUrl;
+}
+
+// **🔹 匯出為 CSV**
+function exportToCSV() {
+  const table = document.getElementById("history-data");
+  if (!table || table.rows.length === 0) {
+    alert("⚠️ 無可匯出的歷史紀錄");
+    return;
   }
 
-  // **下載 Excel 檔案**
-  window.location.href = exportUrl;
+  let csvContent = "data:text/csv;charset=utf-8,日期,房號,學生姓名,狀態\n";
+  for (let row of table.rows) {
+    let rowData = [];
+    for (let cell of row.cells) {
+      rowData.push(cell.textContent);
+    }
+    csvContent += rowData.join(",") + "\n";
+  }
+
+  const link = document.createElement("a");
+  link.setAttribute("href", encodeURI(csvContent));
+  link.setAttribute("download", "attendance_history.csv");
+  document.body.appendChild(link);
+  link.click();
 }
