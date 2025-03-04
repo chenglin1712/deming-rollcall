@@ -31,6 +31,7 @@ document.addEventListener("DOMContentLoaded", () => {
     fetch(`/api/students/all?group=${encodeURIComponent(group)}`)
       .then((response) => response.json())
       .then((students) => {
+        console.log("📞 後端返回的學生數據:", students); // 🛠 Debug API 回傳結果
         studentTableBody.innerHTML = ""; // 清空表格
         if (students.length === 0) {
           studentTableBody.innerHTML =
@@ -38,12 +39,16 @@ document.addEventListener("DOMContentLoaded", () => {
           return;
         }
         students.forEach((student) => {
+          console.log(`📞 學生 ${student.name} 電話:`, student.phoneNumber); // 🛠 Debug 單筆數據
+          let phoneNumber = student.phoneNumber
+            ? student.phoneNumber
+            : "無資料"; // 確保 phoneNumber 有值
           let row = `
             <tr>
-              <td>${student.id}</td> <!-- 確保這裡有 id -->
+              <td>${student.id}</td>
               <td>${student.name}</td>
               <td>${student.roomNumber}</td>
-              <td>${student.phoneNumber}</td>
+              <td>${phoneNumber}</td> 
             </tr>
           `;
           studentTableBody.innerHTML += row;

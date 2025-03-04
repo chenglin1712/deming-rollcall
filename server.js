@@ -128,16 +128,15 @@ app.get("/api/students/all", requireLogin, (req, res) => {
   }
 
   db.all(
-    "SELECT id, name, roomNumber FROM students WHERE TRIM(group_name) = ?",
+    `SELECT id, name, roomNumber, COALESCE(phoneNumber, '無資料') AS phoneNumber 
+     FROM students WHERE TRIM(group_name) = ?`,
     [groupName.trim()],
     (err, rows) => {
       if (err) {
         console.error("❌ 查詢學生名單失敗:", err.message);
         return res.status(500).json({ error: "無法取得學生名單" });
       }
-      if (rows.length === 0) {
-        console.warn(`⚠️ 群組 '${groupName}' 沒有學生資料`);
-      }
+      console.log("📋 查詢到的學生資料:", rows); // 🛠 Debug
       res.json(rows);
     }
   );
