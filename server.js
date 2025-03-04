@@ -245,6 +245,47 @@ app.get("/", (req, res) => {
   }
 });
 
+// 🔒 檢查權限的 Middleware
+const checkPermission = (req, res, next) => {
+  if (!req.session.user) {
+    return res.status(401).json({ success: false, message: "未登入" });
+  }
+
+  const { username } = req.session.user;
+  if (username === "deming") {
+    return res
+      .status(403)
+      .json({ success: false, message: "🙅權限不足，請洽系統管理者" });
+  }
+
+  next(); // 允許通過
+};
+
+// 🛑 限制 `deming` 無法訪問這些 API
+app.get("/api/history", checkPermission, (req, res) => {
+  // 取得歷史紀錄
+});
+
+app.get("/api/students/all", checkPermission, (req, res) => {
+  // 取得學生清單
+});
+
+app.post("/api/add-student", checkPermission, (req, res) => {
+  // 新增學生
+});
+
+//api登出功能
+app.post("/api/logout", (req, res) => {
+  req.session.destroy((err) => {
+    if (err) {
+      console.error("❌ Session 銷毀失敗:", err);
+      return res.status(500).json({ success: false, message: "登出失敗" });
+    }
+    res.clearCookie("connect.sid"); // 清除 cookie
+    res.json({ success: true, message: "已成功登出" });
+  });
+});
+
 // **🚀 啟動伺服器**
 app.listen(port, host, () => {
   console.log(`🚀 伺服器運行於 http://${host}:${port}`);
