@@ -7,6 +7,7 @@ const cors = require("cors");
 const bcrypt = require("bcrypt");
 const session = require("express-session");
 const cookieParser = require("cookie-parser");
+const SQLiteStore = require("connect-sqlite3")(session);
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -29,6 +30,7 @@ app.use(express.static(__dirname));
 
 app.use(
   session({
+    store: new SQLiteStore({ db: "sessions.db", dir: "./" }),
     secret: "secret_key",
     resave: false,
     saveUninitialized: false,
