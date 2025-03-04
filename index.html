@@ -23,22 +23,16 @@
         </section>
 
         <section class="action-buttons">
-          <button
-            id="historyBtn"
-            class="btn primary"
-            onclick="location.href='history.html'"
-          >
+          <button class="btn primary" onclick="location.href='history.html'">
             查看歷史紀錄
           </button>
           <button
-            id="addStudentBtn"
             class="btn secondary"
             onclick="location.href='add_student.html'"
           >
             新增學生
           </button>
           <button
-            id="studentListBtn"
             class="btn secondary"
             onclick="location.href='student_list.html'"
           >
@@ -66,21 +60,6 @@
             document.getElementById(
               "welcome-message"
             ).textContent = `👤 歡迎，${data.user.display_name}`;
-
-            // **⚠️ 檢查權限：限制 deming 帳號使用按鈕**
-            if (data.user.username === "deming") {
-              const restrictedButtons = document.querySelectorAll(
-                "#historyBtn, #addStudentBtn, #studentListBtn"
-              );
-              restrictedButtons.forEach((btn) => {
-                btn.addEventListener("click", (event) => {
-                  event.preventDefault(); // 阻止按鈕點擊行為
-                  alert("🙅權限不足，請洽系統管理者");
-                });
-                btn.style.opacity = "0.5"; // 讓按鈕變淡，提示無法使用
-                btn.style.cursor = "not-allowed";
-              });
-            }
 
             // **📌 取得群組列表**
             fetch("/api/groups")
@@ -115,26 +94,17 @@
             window.location.href = "login.html";
           });
 
-        // **🔓 修正後的登出功能**
+        // **🔓 登出功能**
         document
           .getElementById("logout-btn")
           .addEventListener("click", function () {
-            fetch("/api/logout", { method: "POST", credentials: "include" })
+            fetch("/api/logout", { method: "POST" })
               .then((response) => response.json())
-              .then((data) => {
-                if (data.success) {
-                  console.log("✅ 登出成功，跳轉至 login.html");
-                  sessionStorage.removeItem("user"); // 清除 sessionStorage
-                  window.location.href = "login.html"; // 跳轉回登入頁
-                } else {
-                  console.error("❌ 登出失敗:", data.message);
-                  alert("登出失敗，請重試！");
-                }
+              .then(() => {
+                sessionStorage.removeItem("user");
+                window.location.href = "login.html";
               })
-              .catch((error) => {
-                console.error("❌ 伺服器錯誤，無法登出:", error);
-                alert("伺服器錯誤，請稍後重試！");
-              });
+              .catch((error) => console.error("❌ 登出失敗:", error));
           });
       });
     </script>
