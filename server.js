@@ -30,7 +30,7 @@ app.use(express.static(__dirname));
 
 app.use(
   session({
-    store: new SQLiteStore({ db: "sessions.db", dir: "./" }),
+    store: new SQLiteStore({ db: "sessions.db", dir: "./", ttl: 86400 }), // 24 小時自動刪除過期 session
     secret: "secret_key",
     resave: false,
     saveUninitialized: false,
