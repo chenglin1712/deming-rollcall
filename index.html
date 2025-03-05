@@ -94,17 +94,33 @@
             window.location.href = "login.html";
           });
 
-        // **🔓 登出功能**
+        // **🔓 修正登出功能**
         document
           .getElementById("logout-btn")
           .addEventListener("click", function () {
             fetch("/api/logout", { method: "POST" })
-              .then((response) => response.json())
-              .then(() => {
-                sessionStorage.removeItem("user");
-                window.location.href = "login.html";
+              .then((response) => {
+                if (!response.ok) {
+                  throw new Error("伺服器回應錯誤");
+                }
+                return response.json();
               })
-              .catch((error) => console.error("❌ 登出失敗:", error));
+              .then((data) => {
+                if (data.success) {
+                  console.log("✅ 登出成功");
+                  sessionStorage.removeItem("user");
+                  localStorage.removeItem("user"); // 確保 localStorage 也被清除
+                  document.cookie =
+                    "connect.sid=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;"; // 刪除 Session Cookie
+                  window.location.href = "login.html"; // 跳轉至登入頁
+                } else {
+                  alert("❌ 登出失敗，請重試！");
+                }
+              })
+              .catch((error) => {
+                console.error("❌ 登出請求失敗:", error);
+                alert("❌ 無法連接伺服器，請檢查網絡！");
+              });
           });
       });
     </script>

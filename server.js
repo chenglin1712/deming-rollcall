@@ -291,6 +291,16 @@ app.get("/", (req, res) => {
     res.redirect("/login.html");
   }
 });
+app.post("/api/logout", (req, res) => {
+  req.session.destroy((err) => {
+    if (err) {
+      console.error("❌ 登出時發生錯誤:", err);
+      return res.status(500).json({ success: false, message: "登出失敗" });
+    }
+    res.clearCookie("connect.sid"); // 確保 Cookie 也被刪除
+    res.json({ success: true, message: "登出成功" });
+  });
+});
 
 // **🚀 啟動伺服器**
 app.listen(port, host, () => {
