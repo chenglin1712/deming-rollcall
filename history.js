@@ -1,6 +1,7 @@
 document.addEventListener("DOMContentLoaded", function () {
-  // 頁面加載時載入可選的歷史點名日期
+  // 頁面加載時載入可選的歷史點名日期和群組
   loadDateOptions();
+  loadGroupOptions(); // 新增載入群組的函數
 
   // 綁定按鈕事件
   document
@@ -49,6 +50,24 @@ function loadDateOptions() {
       console.error("載入歷史日期時出錯:", error);
       alert("⚠️ 無法載入歷史日期，請稍後再試，但你仍可瀏覽點名紀錄。");
     });
+}
+
+// **🔹 載入群組名稱（從資料庫獲取動態數據）**
+function loadGroupOptions() {
+  fetch("/api/groups")
+    .then((response) => response.json())
+    .then((groups) => {
+      const groupSelect = document.getElementById("group-select");
+      groupSelect.innerHTML = '<option value="">--- 請選擇群組 ---</option>';
+
+      groups.forEach((group) => {
+        const option = document.createElement("option");
+        option.value = group;
+        option.textContent = group;
+        groupSelect.appendChild(option);
+      });
+    })
+    .catch((error) => console.error("❌ 無法載入群組:", error));
 }
 
 // **🔹 載入歷史數據**
