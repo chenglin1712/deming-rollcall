@@ -73,14 +73,43 @@ users.forEach((user) => {
   });
 });
 
-// **🔒 驗證登入 Middleware**
+// **📌 定義受限頁面（**⚠ **確保這個變數只定義一次** ⚠）**
+const protectedPages = [
+  "add_student.html",
+  "history.html",
+  "student_list.html",
+];
+
+// **🔒 限制權限 Middleware**
 const requireLogin = (req, res, next) => {
   if (!req.session.user) {
     console.log("🚫 未登入，重定向至 login.html");
-    return res.status(401).json({ success: false, message: "未登入" }); // ✅ 修改為 401，避免前端錯誤
+    return res.status(401).json({ success: false, message: "未登入" });
   }
+
+  // **確保 req.path 只取文件名稱**
+  const requestedPage = path.basename(req.path);
+
+  // **檢查 `deming` 是否嘗試訪問受限頁面**
+  if (
+    req.session.user.username === "deming" &&
+    protectedPages.includes(requestedPage)
+  ) {
+    console.log(
+      `🚫 使用者 ${req.session.user.username} 嘗試存取受限頁面: ${requestedPage}`
+    );
+    return res.status(403).json({ success: false, message: "無權限訪問" });
+  }
+
   next();
 };
+
+// **📌 受保護頁面（確保不重複宣告 `protectedPages`）**
+protectedPages.forEach((page) => {
+  app.get(`/${page}`, requireLogin, (req, res) => {
+    res.sendFile(path.join(__dirname, page));
+  });
+});
 
 // **🔐 登入 API**
 app.post("/api/login", (req, res) => {
@@ -284,14 +313,6 @@ app.post("/api/attendance/submit", requireLogin, (req, res) => {
   });
 });
 
-// **📌 修正受保護頁面**
-const protectedPages = [
-  "add_student.html",
-  "attendance.html",
-  "history.html",
-  "index.html",
-  "student_list.html",
-];
 protectedPages.forEach((page) => {
   app.get(`/${page}`, requireLogin, (req, res) => {
     res.sendFile(path.join(__dirname, page));

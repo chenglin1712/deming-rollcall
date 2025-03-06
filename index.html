@@ -22,22 +22,10 @@
           </div>
         </section>
 
-        <section class="action-buttons">
-          <button class="btn primary" onclick="location.href='history.html'">
-            查看歷史紀錄
-          </button>
-          <button
-            class="btn secondary"
-            onclick="location.href='add_student.html'"
-          >
-            新增學生
-          </button>
-          <button
-            class="btn secondary"
-            onclick="location.href='student_list.html'"
-          >
-            學生清單
-          </button>
+        <section class="action-buttons" id="restricted-buttons">
+          <button class="btn primary" id="history-btn">查看歷史紀錄</button>
+          <button class="btn secondary" id="add-student-btn">新增學生</button>
+          <button class="btn secondary" id="student-list-btn">學生清單</button>
         </section>
       </main>
 
@@ -57,9 +45,21 @@
               window.location.href = "login.html";
               return;
             }
+
             document.getElementById(
               "welcome-message"
             ).textContent = `👤 歡迎，${data.user.display_name}`;
+
+            // **📌 如果是 `deming`，隱藏受限按鈕**
+            if (data.user.username === "deming") {
+              console.log("🚫 `deming` 權限受限，隱藏管理按鈕");
+
+              // 隱藏按鈕
+              document.getElementById("history-btn").style.display = "none";
+              document.getElementById("add-student-btn").style.display = "none";
+              document.getElementById("student-list-btn").style.display =
+                "none";
+            }
 
             // **📌 取得群組列表**
             fetch("/api/groups")
@@ -120,6 +120,49 @@
               .catch((error) => {
                 console.error("❌ 登出請求失敗:", error);
                 alert("❌ 無法連接伺服器，請檢查網絡！");
+              });
+          });
+
+        // **🛑 確保 `deming` 無法手動訪問受限頁面**
+        document
+          .getElementById("history-btn")
+          .addEventListener("click", function () {
+            fetch("/api/check-login")
+              .then((response) => response.json())
+              .then((data) => {
+                if (data.user.username === "deming") {
+                  alert("🚫 你沒有權限查看歷史紀錄");
+                } else {
+                  location.href = "history.html";
+                }
+              });
+          });
+
+        document
+          .getElementById("add-student-btn")
+          .addEventListener("click", function () {
+            fetch("/api/check-login")
+              .then((response) => response.json())
+              .then((data) => {
+                if (data.user.username === "deming") {
+                  alert("🚫 你沒有權限新增學生");
+                } else {
+                  location.href = "add_student.html";
+                }
+              });
+          });
+
+        document
+          .getElementById("student-list-btn")
+          .addEventListener("click", function () {
+            fetch("/api/check-login")
+              .then((response) => response.json())
+              .then((data) => {
+                if (data.user.username === "deming") {
+                  alert("🚫 你沒有權限查看學生名單");
+                } else {
+                  location.href = "student_list.html";
+                }
               });
           });
       });
