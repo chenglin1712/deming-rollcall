@@ -159,21 +159,36 @@ app.get("/api/groups", requireLogin, (req, res) => {
 
 // **📌 取得歷史點名紀錄 API**
 app.get("/api/attendance/history", requireLogin, (req, res) => {
-  db.all(
-    `SELECT attendance.date, attendance.student_id, attendance.studentName, attendance.status, students.roomNumber 
-     FROM attendance 
-     LEFT JOIN students ON attendance.student_id = students.id
-     ORDER BY attendance.date DESC`,
-    [],
-    (err, records) => {
-      if (err) {
-        return res
-          .status(500)
-          .json({ success: false, message: "❌ 無法取得歷史紀錄" });
-      }
-      res.json({ success: true, data: records });
+  const { date, group } = req.query;
+  let query = `
+    SELECT attendance.date, attendance.student_id, attendance.studentName, attendance.status, students.roomNumber 
+    FROM attendance 
+    LEFT JOIN students ON attendance.student_id = students.id
+    WHERE 1=1
+  `;
+  const params = [];
+
+  if (date) {
+    query += " AND attendance.date = ?";
+    params.push(date);
+  }
+  if (group) {
+    query += " AND students.group_name = ?";
+    params.push(group);
+  }
+
+  // **確保按照房號或姓名排序**
+  query += " ORDER BY students.roomNumber ASC, attendance.studentName ASC";
+
+  db.all(query, params, (err, records) => {
+    if (err) {
+      return res
+        .status(500)
+        .json({ success: false, message: "❌ 無法取得歷史紀錄" });
     }
-  );
+
+    res.json({ success: true, data: records || [] }); // **確保回傳空陣列而不是 null**
+  });
 });
 
 // **📌 取得可選的點名日期**

@@ -70,28 +70,35 @@ function loadGroupOptions() {
     .catch((error) => console.error("❌ 無法載入群組:", error));
 }
 
-// **🔹 載入歷史數據**
+// **🔹 修正查詢按鈕的行為**
 function loadHistoryData() {
   const date = document.getElementById("date-select").value;
-  const group = document.getElementById("group-select").value;
+  const group = document.getElementById("group-select").value.trim(); // **修正 group 過濾空白**
 
   let apiUrl = "/api/attendance/history";
   const queryParams = [];
 
   if (date) queryParams.push(`date=${encodeURIComponent(date)}`);
-  if (group) queryParams.push(`group=${encodeURIComponent(group)}`);
+  if (group !== "") queryParams.push(`group=${encodeURIComponent(group)}`); // **避免 group 為空字串時仍傳遞**
+
   if (queryParams.length > 0) apiUrl += "?" + queryParams.join("&");
 
   fetch(apiUrl)
     .then((response) => response.json())
     .then((data) => {
       console.log("API 回應資料:", data);
-      if (!data.success) throw new Error("API 回傳失敗");
+
+      if (!data.success || !Array.isArray(data.data)) {
+        throw new Error("API 回應失敗或數據格式錯誤");
+      }
+
       displayHistoryData(data.data);
     })
     .catch((error) => {
       console.error("載入歷史數據時出錯:", error);
-      alert("❌ 載入歷史數據失敗，請稍後再試。");
+      const tableBody = document.getElementById("history-data");
+      tableBody.innerHTML =
+        "<tr><td colspan='4' style='text-align:center; color:red;'>❌ 查詢失敗</td></tr>";
     });
 }
 
@@ -100,13 +107,9 @@ function displayHistoryData(records) {
   const tableBody = document.getElementById("history-data");
   tableBody.innerHTML = "";
 
-  if (records.length === 0) {
+  if (!records || records.length === 0) {
     const emptyRow = document.createElement("tr");
-    const emptyCell = document.createElement("td");
-    emptyCell.colSpan = 4;
-    emptyCell.textContent = "沒有找到歷史紀錄";
-    emptyCell.style.textAlign = "center";
-    emptyRow.appendChild(emptyCell);
+    emptyRow.innerHTML = `<td colspan="4" style="text-align:center; color:gray;">🔍 無點名資料</td>`;
     tableBody.appendChild(emptyRow);
     return;
   }
@@ -163,7 +166,8 @@ function exportToCSV() {
   for (let row of table.rows) {
     let rowData = [];
     for (let cell of row.cells) {
-      rowData.push(cell.textContent);
+      let text = cell.textContent.replace(/"/g, '""'); // **處理雙引號**
+      rowData.push(`"${text}"`); // **確保每個欄位用 `""` 包裹，防止格式錯誤**
     }
     csvContent += rowData.join(",") + "\n";
   }
