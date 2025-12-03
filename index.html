@@ -25,6 +25,9 @@
         <section class="action-buttons" id="restricted-buttons">
           <button class="btn primary" id="history-btn">查看歷史紀錄</button>
           <button class="btn secondary" id="student-list-btn">學生清單</button>
+          <button class="btn secondary" id="import-student-btn">
+            學生資訊匯入
+          </button>
         </section>
       </main>
 
@@ -53,9 +56,11 @@
             if (data.user.username === "deming") {
               console.log("🚫 `deming` 權限受限，隱藏管理按鈕");
 
-              // 隱藏按鈕
+              // 隱藏管理功能按鈕
               document.getElementById("history-btn").style.display = "none";
               document.getElementById("student-list-btn").style.display =
+                "none";
+              document.getElementById("import-student-btn").style.display =
                 "none";
             }
 
@@ -92,7 +97,7 @@
             window.location.href = "login.html";
           });
 
-        // **🔓 修正登出功能**
+        // **🔓 登出功能**
         document
           .getElementById("logout-btn")
           .addEventListener("click", function () {
@@ -121,34 +126,41 @@
               });
           });
 
-        // **🛑 確保 `deming` 無法手動訪問受限頁面**
+        // **🛑 按鈕權限控制與跳轉**
+
+        // 1. 歷史紀錄
         document
           .getElementById("history-btn")
           .addEventListener("click", function () {
-            fetch("/api/check-login")
-              .then((response) => response.json())
-              .then((data) => {
-                if (data.user.username === "deming") {
-                  alert("🚫 你沒有權限查看歷史紀錄");
-                } else {
-                  location.href = "history.html";
-                }
-              });
+            checkPermissionAndGo("history.html", "查看歷史紀錄");
           });
 
+        // 2. 學生清單
         document
           .getElementById("student-list-btn")
           .addEventListener("click", function () {
-            fetch("/api/check-login")
-              .then((response) => response.json())
-              .then((data) => {
-                if (data.user.username === "deming") {
-                  alert("🚫 你沒有權限查看學生名單");
-                } else {
-                  location.href = "student_list.html";
-                }
-              });
+            checkPermissionAndGo("student_list.html", "查看學生名單");
           });
+
+        // 3. 學生資訊匯入 (新增)
+        document
+          .getElementById("import-student-btn")
+          .addEventListener("click", function () {
+            checkPermissionAndGo("add_student.html", "匯入學生資料");
+          });
+
+        // 通用權限檢查函式
+        function checkPermissionAndGo(targetUrl, actionName) {
+          fetch("/api/check-login")
+            .then((response) => response.json())
+            .then((data) => {
+              if (data.user.username === "deming") {
+                alert(`🚫 你沒有權限${actionName}`);
+              } else {
+                location.href = targetUrl;
+              }
+            });
+        }
       });
     </script>
   </body>

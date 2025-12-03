@@ -8,50 +8,43 @@ const bcrypt = require("bcrypt");
 const session = require("express-session");
 const cookieParser = require("cookie-parser");
 const SQLiteStore = require("connect-sqlite3")(session);
+const multer = require("multer");
+const ExcelJS = require("exceljs");
+const stream = require("stream");
 
 const app = express();
 const port = process.env.PORT || 3000;
-const host = "0.0.0.0"; // ✅ 允許所有 IP 存取
+const host = "0.0.0.0";
 
-app.use(cookieParser()); // ✅ 解析 cookie
+const upload = multer({ storage: multer.memoryStorage() });
 
-// ✅ 修正 CORS，確保跨網域 session 有效
+app.use(cookieParser());
 app.use(
   cors({
-    origin: "*", // ✅ 允許任何來源（適用於外網）
+    origin: "*",
     methods: "GET,POST,OPTIONS",
     allowedHeaders: "Content-Type",
-    credentials: true, // ✅ 允許攜帶 session
+    credentials: true,
   })
 );
-
 app.use(bodyParser.json());
 app.use(express.static(__dirname));
 
 app.use(
   session({
-    store: new SQLiteStore({ db: "sessions.db", dir: "./", ttl: 86400 }), // 24 小時自動刪除過期 session
+    store: new SQLiteStore({ db: "sessions.db", dir: "./", ttl: 86400 }),
     secret: "secret_key",
     resave: false,
     saveUninitialized: false,
-    cookie: {
-      secure: false, // ✅ `false` 避免 HTTP 無法存取 session
-      httpOnly: true,
-      maxAge: 24 * 60 * 60 * 1000, // ✅ 確保 session 存活 24 小時
-    },
+    cookie: { secure: false, httpOnly: true, maxAge: 24 * 60 * 60 * 1000 },
   })
 );
 
-// 連接 SQLite 資料庫
 const db = new sqlite3.Database("./dormitory.db", (err) => {
-  if (err) {
-    console.error("❌ 無法連接到資料庫:", err.message);
-  } else {
-    console.log("✅ 已連接到 SQLite 資料庫");
-  }
+  if (err) console.error("❌ 無法連接到資料庫:", err.message);
+  else console.log("✅ 已連接到 SQLite 資料庫");
 });
 
-// **📌 預設帳號**
 const users = [
   { username: "xm2801", password: "admin", display_name: "德銘宿舍羅老師" },
   {
@@ -73,69 +66,53 @@ users.forEach((user) => {
   });
 });
 
-// **📌 定義受限頁面（**⚠ **確保這個變數只定義一次** ⚠）**
 const protectedPages = [
   "add_student.html",
   "history.html",
   "student_list.html",
 ];
 
-// **🔒 限制權限 Middleware**
 const requireLogin = (req, res, next) => {
-  if (!req.session.user) {
-    console.log("🚫 未登入，重定向至 login.html");
+  if (!req.session.user)
     return res.status(401).json({ success: false, message: "未登入" });
-  }
 
-  // **確保 req.path 只取文件名稱**
   const requestedPage = path.basename(req.path);
-
-  // **檢查 `deming` 是否嘗試訪問受限頁面**
   if (
     req.session.user.username === "deming" &&
     protectedPages.includes(requestedPage)
   ) {
-    console.log(
-      `🚫 使用者 ${req.session.user.username} 嘗試存取受限頁面: ${requestedPage}`
-    );
     return res.status(403).json({ success: false, message: "無權限訪問" });
   }
-
   next();
 };
 
-// **📌 受保護頁面（確保不重複宣告 `protectedPages`）**
 protectedPages.forEach((page) => {
-  app.get(`/${page}`, requireLogin, (req, res) => {
-    res.sendFile(path.join(__dirname, page));
-  });
+  app.get(`/${page}`, requireLogin, (req, res) =>
+    res.sendFile(path.join(__dirname, page))
+  );
 });
 
-// **🔐 登入 API**
+// ================= API 區域 =================
+
 app.post("/api/login", (req, res) => {
   const { username, password } = req.body;
-  if (!username || !password) {
-    return res
-      .status(400)
-      .json({ success: false, message: "請提供帳號與密碼" });
-  }
+  if (!username || !password)
+    return res.status(400).json({ success: false, message: "請輸入帳密" });
 
   db.get("SELECT * FROM users WHERE username = ?", [username], (err, user) => {
-    if (err || !user) {
+    if (err || !user)
       return res
         .status(401)
         .json({ success: false, message: "帳號或密碼錯誤" });
-    }
     bcrypt.compare(password, user.password, (err, result) => {
       if (result) {
         req.session.user = {
           username: user.username,
           display_name: user.display_name,
         };
-        console.log("✅ 使用者登入成功:", req.session.user);
-        req.session.save(() => {
-          res.json({ success: true, user: req.session.user });
-        });
+        req.session.save(() =>
+          res.json({ success: true, user: req.session.user })
+        );
       } else {
         res.status(401).json({ success: false, message: "帳號或密碼錯誤" });
       }
@@ -143,60 +120,37 @@ app.post("/api/login", (req, res) => {
   });
 });
 
-// **📌 確認登入狀態 API**
-app.get("/api/check-login", (req, res) => {
-  console.log("🔍 session 狀態:", req.session.user);
-  res.json({ loggedIn: !!req.session.user, user: req.session.user });
-});
+app.get("/api/check-login", (req, res) =>
+  res.json({ loggedIn: !!req.session.user, user: req.session.user })
+);
 
-// **📌 取得學生列表 API**
 app.get("/api/students/all", requireLogin, (req, res) => {
-  const groupName = req.query.group;
-  if (!groupName) {
-    return res.status(400).json({ error: "缺少群組名稱" });
-  }
-
+  if (!req.query.group) return res.status(400).json({ error: "缺少群組名稱" });
   db.all(
-    `SELECT id, name, roomNumber, COALESCE(phoneNumber, '無資料') AS phoneNumber 
-     FROM students WHERE TRIM(group_name) = ?`,
-    [groupName.trim()],
+    `SELECT id, name, roomNumber, COALESCE(phoneNumber, '無資料') AS phoneNumber FROM students WHERE TRIM(group_name) = ?`,
+    [req.query.group.trim()],
     (err, rows) => {
-      if (err) {
-        console.error("❌ 查詢學生名單失敗:", err.message);
-        return res.status(500).json({ error: "無法取得學生名單" });
-      }
-      console.log("📋 查詢到的學生資料:", rows); // 🛠 Debug
+      if (err) return res.status(500).json({ error: "查詢失敗" });
       res.json(rows);
     }
   );
 });
 
-// **📌 取得點名群組 API**
 app.get("/api/groups", requireLogin, (req, res) => {
   db.all(
-    "SELECT DISTINCT TRIM(group_name) as group_name FROM students WHERE group_name IS NOT NULL",
+    "SELECT DISTINCT TRIM(group_name) as group_name FROM students WHERE group_name IS NOT NULL ORDER BY group_name ASC",
     [],
     (err, rows) => {
-      if (err) {
-        console.error("❌ 查詢群組名稱錯誤:", err.message);
-        return res.status(500).json({ error: err.message });
-      }
+      if (err) return res.status(500).json({ error: err.message });
       res.json(rows.map((row) => row.group_name));
     }
   );
 });
 
-// **📌 取得歷史點名紀錄 API**
 app.get("/api/attendance/history", requireLogin, (req, res) => {
   const { date, group } = req.query;
-  let query = `
-    SELECT attendance.date, attendance.student_id, attendance.studentName, attendance.status, students.roomNumber 
-    FROM attendance 
-    LEFT JOIN students ON attendance.student_id = students.id
-    WHERE 1=1
-  `;
+  let query = `SELECT attendance.date, attendance.student_id, attendance.studentName, attendance.status, students.roomNumber FROM attendance LEFT JOIN students ON attendance.student_id = students.id WHERE 1=1`;
   const params = [];
-
   if (date) {
     query += " AND attendance.date = ?";
     params.push(date);
@@ -205,105 +159,72 @@ app.get("/api/attendance/history", requireLogin, (req, res) => {
     query += " AND students.group_name = ?";
     params.push(group);
   }
-
-  // **確保按照房號或姓名排序**
   query += " ORDER BY students.roomNumber ASC, attendance.studentName ASC";
 
   db.all(query, params, (err, records) => {
-    if (err) {
-      return res
-        .status(500)
-        .json({ success: false, message: "❌ 無法取得歷史紀錄" });
-    }
-
-    res.json({ success: true, data: records || [] }); // **確保回傳空陣列而不是 null**
+    if (err)
+      return res.status(500).json({ success: false, message: "查詢失敗" });
+    res.json({ success: true, data: records || [] });
   });
 });
 
-// **📌 取得可選的點名日期**
 app.get("/api/attendance/dates", requireLogin, (req, res) => {
   db.all(
     `SELECT DISTINCT date FROM attendance ORDER BY date DESC`,
     [],
     (err, rows) => {
-      if (err) {
-        console.error("❌ 無法取得歷史日期:", err.message);
-        return res
-          .status(500)
-          .json({ success: false, message: "無法取得歷史日期" });
-      }
+      if (err)
+        return res.status(500).json({ success: false, message: "查詢失敗" });
       res.json(rows.map((row) => row.date));
     }
   );
 });
 
-// **📌 修正點名提交 API**
 app.post("/api/attendance/submit", requireLogin, (req, res) => {
   const { date, group, attendanceData } = req.body;
-
-  if (!date || !group || !attendanceData || !Array.isArray(attendanceData)) {
-    return res.status(400).json({ error: "請提供完整的點名資料" });
-  }
+  if (!date || !group || !attendanceData)
+    return res.status(400).json({ error: "資料不完整" });
 
   db.serialize(() => {
-    let errors = [];
-    let alreadyMarked = [];
-    let completed = 0;
-
-    // 檢查哪些學生已經點過名
-    const studentIds = attendanceData.map(({ student_id }) => student_id);
+    const studentIds = attendanceData.map((s) => s.student_id);
     db.all(
       `SELECT student_id FROM attendance WHERE date = ? AND student_id IN (${studentIds
         .map(() => "?")
         .join(",")})`,
       [date, ...studentIds],
       (err, rows) => {
-        if (err) {
-          return res.status(500).json({ error: "❌ 無法檢查點名狀態" });
-        }
+        if (err) return res.status(500).json({ error: "查詢失敗" });
 
-        // 取得已點名的 student_id
-        alreadyMarked = rows.map((row) => row.student_id);
-
-        // 過濾出尚未點名的學生
+        const alreadyMarked = rows.map((r) => r.student_id);
         const newAttendance = attendanceData.filter(
-          ({ student_id }) => !alreadyMarked.includes(student_id)
+          (s) => !alreadyMarked.includes(s.student_id)
         );
 
-        if (newAttendance.length === 0) {
-          return res.status(409).json({ error: "❌ 已完成點名，請洽系統管理" });
-        }
+        if (newAttendance.length === 0)
+          return res.status(409).json({ error: "所有學生均已點名" });
 
-        // 準備插入點名紀錄
         const stmt = db.prepare(
           "INSERT INTO attendance (date, student_id, studentName, status, roomNumber) VALUES (?, ?, ?, ?, ?)"
         );
+        let completed = 0;
+        let errors = [];
 
-        newAttendance.forEach(({ student_id, studentName, status }) => {
+        newAttendance.forEach((s) => {
           db.get(
             "SELECT roomNumber FROM students WHERE id = ?",
-            [student_id],
+            [s.student_id],
             (err, row) => {
-              if (err || !row) {
-                errors.push(student_id);
-                stmt.run(date, student_id, studentName, status, "N/A");
-              } else {
-                stmt.run(date, student_id, studentName, status, row.roomNumber);
-              }
+              let roomNum = row ? row.roomNumber : "N/A";
+              if (!row) errors.push(s.student_id);
+              stmt.run(date, s.student_id, s.studentName, s.status, roomNum);
               completed++;
-
               if (completed === newAttendance.length) {
                 stmt.finalize();
-                if (errors.length > 0) {
-                  res.status(207).json({
-                    success: true,
-                    message: `✅ 點名成功，但學生 ID (${errors.join(
-                      ", "
-                    )}) 未找到房號，已存為 "N/A"。`,
-                  });
-                } else {
-                  res.json({ success: true, message: "✅ 點名成功！" });
-                }
+                res.json({
+                  success: true,
+                  message:
+                    errors.length > 0 ? "點名成功(部分無房號)" : "點名成功",
+                });
               }
             }
           );
@@ -313,32 +234,165 @@ app.post("/api/attendance/submit", requireLogin, (req, res) => {
   });
 });
 
-protectedPages.forEach((page) => {
-  app.get(`/${page}`, requireLogin, (req, res) => {
-    res.sendFile(path.join(__dirname, page));
-  });
-});
+// **🆕 修正後的匯入 API (對應您的 Excel 實際欄位)**
+app.post(
+  "/api/students/import",
+  requireLogin,
+  upload.single("file"),
+  async (req, res) => {
+    if (req.session.user.username === "deming")
+      return res.status(403).json({ success: false, message: "無權限" });
+    if (!req.file)
+      return res.status(400).json({ success: false, message: "未上傳檔案" });
 
-// **📌 修正登入後跳轉 `index.html`**
-app.get("/", (req, res) => {
-  if (req.session.user) {
-    res.sendFile(path.join(__dirname, "index.html"));
-  } else {
-    res.redirect("/login.html");
-  }
-});
-app.post("/api/logout", (req, res) => {
-  req.session.destroy((err) => {
-    if (err) {
-      console.error("❌ 登出時發生錯誤:", err);
-      return res.status(500).json({ success: false, message: "登出失敗" });
+    try {
+      const workbook = new ExcelJS.Workbook();
+      const originalName = req.file.originalname.toLowerCase();
+      let worksheet;
+
+      console.log(
+        `📂 收到檔案: ${req.file.originalname} (${req.file.mimetype})`
+      );
+
+      // 自動判斷格式
+      if (originalName.endsWith(".csv") || req.file.mimetype === "text/csv") {
+        console.log("🔄 偵測為 CSV 模式讀取...");
+        const bufferStream = new stream.PassThrough();
+        bufferStream.end(req.file.buffer);
+        await workbook.csv.read(bufferStream);
+        worksheet = workbook.getWorksheet(1);
+      } else {
+        console.log("🔄 偵測為 Excel (XLSX) 模式讀取...");
+        await workbook.xlsx.load(req.file.buffer);
+        worksheet = workbook.getWorksheet(1);
+      }
+
+      if (!worksheet)
+        return res
+          .status(400)
+          .json({ success: false, message: "無法讀取檔案內容" });
+
+      let headers = {};
+      // 讀取標題
+      worksheet.getRow(1).eachCell((cell, colNumber) => {
+        const val = cell.value
+          ? cell.value
+              .toString()
+              .trim()
+              .replace(/^\ufeff/, "")
+          : "";
+        headers[val] = colNumber;
+      });
+
+      console.log("📋 偵測到的欄位:", JSON.stringify(headers));
+
+      // **📝 關鍵修正：這裡改成您 Excel 裡實際的標題名稱**
+      const requiredFields = ["性別", "學號", "姓名", "房號", "床"]; // 注意：這裡是「床」，不是「床號」
+      const missing = requiredFields.filter((f) => !headers[f]);
+
+      if (missing.length > 0) {
+        return res
+          .status(400)
+          .json({ success: false, message: `缺少欄位: ${missing.join(", ")}` });
+      }
+
+      const students = [];
+      worksheet.eachRow((row, rowNumber) => {
+        if (rowNumber === 1) return; // 跳過標題
+
+        const getVal = (key) => {
+          const idx = headers[key];
+          if (!idx) return "";
+          let val = row.getCell(idx).value;
+          if (val && typeof val === "object" && val.text) val = val.text;
+          return val ? val.toString().trim() : "";
+        };
+
+        const gender = getVal("性別");
+        const id = getVal("學號");
+        const name = getVal("姓名");
+        const room = getVal("房號");
+        const bed = getVal("床"); // **修正：對應 Excel 的「床」**
+        const phone = getVal("電話") || getVal("手機號碼") || "無資料"; // **修正：優先抓「電話」**
+
+        if (id && name && room && bed && gender) {
+          // **邏輯 1：房號 + 床 (1231 + B => 1231B)**
+          const formattedRoom = `${room}${bed}`;
+
+          // **邏輯 2：自動分組**
+          const floor = room.slice(-1);
+          let groupPrefix = "德明宿舍";
+          if (gender === "男") groupPrefix += "男";
+          else if (gender === "女") groupPrefix += "女";
+
+          const groupName = `${groupPrefix} ${floor}樓`;
+
+          students.push({
+            id,
+            name,
+            roomNumber: formattedRoom,
+            phoneNumber: phone,
+            group_name: groupName,
+          });
+        }
+      });
+
+      if (students.length === 0)
+        return res.status(400).json({ success: false, message: "無有效資料" });
+
+      db.serialize(() => {
+        db.run("BEGIN TRANSACTION");
+        const stmt = db.prepare(
+          `INSERT OR REPLACE INTO students (id, name, roomNumber, phoneNumber, group_name) VALUES (?, ?, ?, ?, ?)`
+        );
+        let count = 0;
+        students.forEach((s) => {
+          stmt.run(
+            s.id,
+            s.name,
+            s.roomNumber,
+            s.phoneNumber,
+            s.group_name,
+            (err) => {
+              if (!err) count++;
+            }
+          );
+        });
+        stmt.finalize();
+        db.run("COMMIT", (err) => {
+          if (err)
+            return res
+              .status(500)
+              .json({ success: false, message: "資料庫寫入失敗" });
+          console.log(`✅ 成功匯入 ${count} 筆資料`);
+          res.json({
+            success: true,
+            message: `成功匯入 ${count} 筆學生資料！`,
+          });
+        });
+      });
+    } catch (error) {
+      console.error("處理錯誤:", error);
+      res
+        .status(500)
+        .json({ success: false, message: "檔案解析錯誤，請確認格式。" });
     }
-    res.clearCookie("connect.sid"); // 確保 Cookie 也被刪除
-    res.json({ success: true, message: "登出成功" });
+  }
+);
+
+// 9. 登出
+app.post("/api/logout", (req, res) => {
+  req.session.destroy(() => {
+    res.clearCookie("connect.sid");
+    res.json({ success: true });
   });
 });
 
-// **🚀 啟動伺服器**
-app.listen(port, host, () => {
-  console.log(`🚀 伺服器運行於 http://${host}:${port}`);
-});
+// 10. 根目錄
+app.get("/", (req, res) =>
+  res.redirect(req.session.user ? "/index.html" : "/login.html")
+);
+
+app.listen(port, host, () =>
+  console.log(`🚀 伺服器運行於 http://${host}:${port}`)
+);

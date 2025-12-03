@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>匯入學生資料 - 宿舍點名系統</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>匯入學生資料</h1>
+      </header>
+
+      <main>
+        <section class="card">
+          <h2>批次上傳 Excel 檔案</h2>
+          <p>請上傳包含學生名冊的 .xlsx 檔案。</p>
+
+          <div
+            style="
+              background-color: #e1f0fa;
+              padding: 15px;
+              border-radius: 6px;
+              margin-bottom: 20px;
+              border-left: 4px solid #3498db;
+            "
+          >
+            <p style="margin-bottom: 5px">
+              <strong>📋 格式要求 (Excel 必須包含以下標題)：</strong>
+            </p>
+            <ul style="padding-left: 20px; font-size: 0.95rem">
+              <li><strong>性別</strong> (用於判斷群組：德明宿舍男/女)</li>
+              <li><strong>房號</strong> (例如：1231)</li>
+              <li><strong>床號</strong> (例如：B)</li>
+              <li><strong>學號</strong>、<strong>姓名</strong></li>
+              <li>手機號碼 (選填)</li>
+            </ul>
+            <p style="margin-top: 10px; font-size: 0.9rem; color: #555">
+              💡 系統會自動將「房號」+「床號」組合成完整房號 (如
+              1231B)，並根據房號尾數自動分類樓層。
+            </p>
+          </div>
+
+          <form id="upload-form">
+            <div class="form-group">
+              <label for="file-upload">選擇檔案 (.xlsx)：</label>
+              <input
+                type="file"
+                id="file-upload"
+                name="file"
+                accept=".xlsx, .xls"
+                required
+                style="padding: 10px; background-color: #f8f9fa"
+              />
+            </div>
+
+            <div class="action-buttons">
+              <button type="submit" class="btn primary" id="upload-btn">
+                開始匯入
+              </button>
+              <button
+                type="button"
+                class="btn secondary"
+                onclick="location.href='index.html'"
+              >
+                返回首頁
+              </button>
+            </div>
+          </form>
+
+          <div
+            id="status-message"
+            style="
+              margin-top: 20px;
+              display: none;
+              text-align: center;
+              font-weight: bold;
+            "
+          ></div>
+        </section>
+      </main>
+
+      <footer>
+        <p>© 2025 宿舍點名系統</p>
+      </footer>
+    </div>
+
+    <script src="add_student.js"></script>
+  </body>
+</html>
