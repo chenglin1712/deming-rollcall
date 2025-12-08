@@ -19,17 +19,12 @@
               <label for="date-select">選擇日期:</label>
               <select id="date-select">
                 <option value="">-- 請選擇日期 --</option>
-                <!-- 日期選項會通過JavaScript動態生成 -->
               </select>
             </div>
             <div class="filter-row">
               <label for="group-select">選擇群組:</label>
               <select id="group-select">
                 <option value="">全部群組</option>
-                <option value="德明國際生男">德銘國際生男</option>
-                <option value="德銘國際生女">德銘國際生女</option>
-                <option value="德銘男4樓">德銘男4樓</option>
-                <option value="德銘男5樓">德銘男5樓</option>
               </select>
             </div>
             <button id="filter-btn" class="btn primary">查詢</button>
@@ -45,15 +40,16 @@
                   <th>狀態</th>
                 </tr>
               </thead>
-              <tbody id="history-data">
-                <!-- 歷史數據會通過JavaScript動態生成 -->
-              </tbody>
+              <tbody id="history-data"></tbody>
             </table>
           </div>
 
           <div class="action-buttons">
-            <button id="export-btn" class="btn secondary">匯出為Excel</button>
+            <button id="export-btn" class="btn secondary">匯出為 Excel</button>
             <button id="export-csv-btn" class="btn secondary">匯出 CSV</button>
+
+            <button id="clear-btn" class="btn danger">⚠️ 清空所有紀錄</button>
+
             <button class="btn secondary" onclick="location.href='index.html'">
               返回首頁
             </button>

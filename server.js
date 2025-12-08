@@ -234,7 +234,36 @@ app.post("/api/attendance/submit", requireLogin, (req, res) => {
   });
 });
 
-// **🆕 修正後的匯入 API (對應您的 Excel 實際欄位)**
+// **🆕 新增：清除所有點名紀錄 API (只有管理員可執行)**
+app.delete("/api/attendance/clear", requireLogin, (req, res) => {
+  // 安全檢查：只有管理員 (12130340 或 xm2801) 可以刪除，deming (樓長) 不行
+  if (req.session.user.username === "deming") {
+    return res
+      .status(403)
+      .json({ success: false, message: "您沒有權限執行此操作" });
+  }
+
+  db.run("DELETE FROM attendance", (err) => {
+    if (err) {
+      console.error("❌ 清除資料失敗:", err);
+      return res
+        .status(500)
+        .json({ success: false, message: "資料庫錯誤，清除失敗" });
+    }
+
+    // 選用：重置自增 ID (讓下次點名從 ID 1 開始)
+    db.run("DELETE FROM sqlite_sequence WHERE name='attendance'", (seqErr) => {
+      if (seqErr) console.warn("⚠️ 無法重置 ID 序列:", seqErr);
+    });
+
+    console.log(
+      `⚠️ 使用者 ${req.session.user.display_name} 已清空所有點名紀錄`
+    );
+    res.json({ success: true, message: "所有歷史紀錄已成功清除！" });
+  });
+});
+
+// **修正後的匯入 API (對應您的 Excel 實際欄位)**
 app.post(
   "/api/students/import",
   requireLogin,

@@ -449,3 +449,11 @@ form {
     text-align: center;
   }
 }
+.btn.danger {
+  background-color: #e74c3c;
+  color: white;
+}
+
+.btn.danger:hover {
+  background-color: #c0392b;
+}
