@@ -62,7 +62,7 @@ function displayStudents(students) {
       radio.dataset.studentName = student.name; // 新增學生姓名 dataset
     });
 
-    row.querySelector('input[value="未歸"]').checked = true; // 預設選擇「未歸」
+    row.querySelector('input[value="在寢"]').checked = true; // 預設選擇「在寢」
     studentList.appendChild(row);
   });
 
