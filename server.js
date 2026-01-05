@@ -147,6 +147,35 @@ app.get("/api/groups", requireLogin, (req, res) => {
   );
 });
 
+// ==========================================
+// 🔍 新增：搜尋單一學生 API (包含今日狀態)
+// ==========================================
+app.get("/api/student/search", requireLogin, (req, res) => {
+  const { id } = req.query;
+  if (!id)
+    return res.status(400).json({ success: false, message: "請輸入學號" });
+
+  // 取得今日日期 (YYYY-MM-DD)，這裡使用 ISO 格式取日期部分
+  const today = new Date().toISOString().split("T")[0];
+
+  const sql = `
+    SELECT s.id, s.name, s.roomNumber, s.phoneNumber, s.group_name, a.status as today_status
+    FROM students s
+    LEFT JOIN attendance a ON s.id = a.student_id AND a.date = ?
+    WHERE s.id = ?
+  `;
+
+  db.get(sql, [today, id], (err, row) => {
+    if (err)
+      return res.status(500).json({ success: false, message: "資料庫錯誤" });
+    if (!row)
+      return res.status(404).json({ success: false, message: "找不到此學號" });
+
+    res.json({ success: true, data: row });
+  });
+});
+// ==========================================
+
 app.get("/api/attendance/history", requireLogin, (req, res) => {
   const { date, group } = req.query;
   let query = `SELECT attendance.date, attendance.student_id, attendance.studentName, attendance.status, students.roomNumber FROM attendance LEFT JOIN students ON attendance.student_id = students.id WHERE 1=1`;

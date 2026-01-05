@@ -8,160 +8,316 @@
   </head>
   <body>
     <div class="container">
-      <header>
-        <h1>宿舍點名系統</h1>
-        <p id="welcome-message">載入中...</p>
-        <button id="logout-btn" class="btn secondary">登出</button>
+      <header id="main-header">
+        <div>
+          <h1>宿舍點名系統</h1>
+          <p id="welcome-message">載入中...</p>
+        </div>
+        <button id="logout-btn-header" class="btn secondary">登出</button>
       </header>
 
       <main>
-        <section class="card">
-          <h2>選擇點名群組</h2>
-          <div class="group-selection" id="group-container">
-            <p>正在載入群組...</p>
+        <div id="admin-dashboard" class="hidden">
+          <div class="admin-header-widget">
+            <h2 id="admin-welcome">Good Morning.</h2>
+            <p id="system-time">--月--日</p>
           </div>
-        </section>
 
-        <section class="action-buttons" id="restricted-buttons">
-          <button class="btn primary" id="history-btn">查看歷史紀錄</button>
-          <button class="btn secondary" id="student-list-btn">學生清單</button>
-          <button class="btn secondary" id="import-student-btn">
-            學生資訊匯入
-          </button>
-        </section>
+          <div class="search-wrapper">
+            <span class="search-icon-placeholder">🔍</span>
+            <input
+              type="text"
+              id="student-search-input"
+              class="search-input"
+              placeholder="輸入學號搜尋學生..."
+              autocomplete="off"
+            />
+          </div>
+
+          <div class="grid-menu">
+            <div
+              class="menu-item action-primary"
+              onclick="toggleView('leader')"
+            >
+              <div class="icon-box">📝</div>
+              <span>開始點名</span>
+              <p class="desc">進入樓層列表</p>
+            </div>
+            <div
+              class="menu-item history"
+              onclick="location.href='history.html'"
+            >
+              <div class="icon-box">📅</div>
+              <span>歷史紀錄</span>
+            </div>
+            <div
+              class="menu-item students"
+              onclick="location.href='student_list.html'"
+            >
+              <div class="icon-box">👥</div>
+              <span>學生名單</span>
+            </div>
+            <div
+              class="menu-item import"
+              onclick="location.href='add_student.html'"
+            >
+              <div class="icon-box">📥</div>
+              <span>匯入資料</span>
+            </div>
+            <div class="menu-item danger" onclick="confirmClear()">
+              <div class="icon-box">🗑️</div>
+              <span>清空紀錄</span>
+            </div>
+            <div
+              class="menu-item logout"
+              onclick="document.getElementById('logout-btn-header').click()"
+            >
+              <div class="icon-box">🔒</div>
+              <span>登出系統</span>
+            </div>
+          </div>
+        </div>
+
+        <div id="dorm-leader-view">
+          <div style="margin-bottom: 15px">
+            <button
+              id="back-to-dashboard-btn"
+              class="btn text-only hidden"
+              onclick="toggleView('admin')"
+            >
+              ← 返回管理儀表板
+            </button>
+          </div>
+
+          <section class="card-simple">
+            <h2>選擇點名群組</h2>
+            <div class="group-selection" id="group-container">
+              <p>正在載入群組...</p>
+            </div>
+          </section>
+        </div>
       </main>
 
       <footer>
-        <p>© 2025 宿舍點名系統</p>
+        <p>© 2025 德明宿舍管理系統</p>
       </footer>
+
+      <div class="modal-overlay" id="search-modal" onclick="closeModal(event)">
+        <div class="modal-card">
+          <div class="student-avatar">👤</div>
+          <h3 id="modal-name">載入中...</h3>
+          <p id="modal-id">--</p>
+
+          <div class="info-grid">
+            <div class="info-item">
+              <label>房號/床位</label>
+              <span id="modal-room">--</span>
+            </div>
+            <div class="info-item">
+              <label>群組</label>
+              <span id="modal-group">--</span>
+            </div>
+            <div class="info-item" style="grid-column: 1 / -1">
+              <label>今日狀態</label>
+              <div id="modal-status-container" style="margin-top: 5px">
+                <span class="status-badge">未點名</span>
+              </div>
+            </div>
+            <div class="info-item" style="grid-column: 1 / -1">
+              <label>聯絡電話</label>
+              <span id="modal-phone">--</span>
+            </div>
+          </div>
+
+          <button
+            class="btn secondary"
+            style="width: 100%"
+            onclick="closeModal(null, true)"
+          >
+            關閉
+          </button>
+        </div>
+      </div>
     </div>
 
     <script>
       document.addEventListener("DOMContentLoaded", function () {
-        // **🔍 檢查登入狀態**
+        // ... (原有的登入檢查邏輯保持不變) ...
         fetch("/api/check-login")
           .then((response) => response.json())
           .then((data) => {
             if (!data.loggedIn) {
-              console.log("🚫 未登入，跳轉至 login.html");
               window.location.href = "login.html";
               return;
             }
-
+            const user = data.user;
+            const displayName = user.display_name.split("（")[0];
             document.getElementById(
               "welcome-message"
-            ).textContent = `👤 歡迎，${data.user.display_name}`;
+            ).textContent = `Hi, ${displayName}`;
 
-            // **📌 如果是 `deming`，隱藏受限按鈕**
-            if (data.user.username === "deming") {
-              console.log("🚫 `deming` 權限受限，隱藏管理按鈕");
-
-              // 隱藏管理功能按鈕
-              document.getElementById("history-btn").style.display = "none";
-              document.getElementById("student-list-btn").style.display =
-                "none";
-              document.getElementById("import-student-btn").style.display =
-                "none";
+            if (user.username === "deming") {
+              toggleView("leader", false);
+            } else {
+              // 管理員模式
+              const now = new Date();
+              const hour = now.getHours();
+              let greeting = "早安";
+              if (hour >= 11) greeting = "午安";
+              if (hour >= 18) greeting = "晚安";
+              document.getElementById(
+                "admin-welcome"
+              ).textContent = `${greeting}，${displayName}。`;
+              updateTime();
+              toggleView("admin");
             }
-
-            // **📌 取得群組列表**
-            fetch("/api/groups")
-              .then((response) => response.json())
-              .then((groups) => {
-                const groupContainer =
-                  document.getElementById("group-container");
-                groupContainer.innerHTML = ""; // 清空舊內容
-                if (groups.length === 0) {
-                  groupContainer.innerHTML = "<p>⚠️ 目前沒有可用的群組。</p>";
-                  return;
-                }
-                groups.forEach((group) => {
-                  let groupCard = document.createElement("div");
-                  groupCard.className = "group-card";
-                  groupCard.onclick = () =>
-                    (location.href = `attendance.html?group=${encodeURIComponent(
-                      group
-                    )}`);
-                  groupCard.innerHTML = `<h3>${group}</h3><p>點擊進行點名</p>`;
-                  groupContainer.appendChild(groupCard);
-                });
-              })
-              .catch((error) => {
-                console.error("❌ 載入群組失敗:", error);
-                document.getElementById("group-container").innerHTML =
-                  "<p>⚠️ 無法載入群組，請稍後重試。</p>";
-              });
-          })
-          .catch((error) => {
-            console.error("❌ 無法確認登入狀態:", error);
-            window.location.href = "login.html";
+            loadGroups();
           });
 
-        // **🔓 登出功能**
+        // 登出
         document
-          .getElementById("logout-btn")
+          .getElementById("logout-btn-header")
           .addEventListener("click", function () {
             fetch("/api/logout", { method: "POST" })
-              .then((response) => {
-                if (!response.ok) {
-                  throw new Error("伺服器回應錯誤");
-                }
-                return response.json();
-              })
+              .then((res) => res.json())
               .then((data) => {
                 if (data.success) {
-                  console.log("✅ 登出成功");
-                  sessionStorage.removeItem("user");
-                  localStorage.removeItem("user"); // 確保 localStorage 也被清除
-                  document.cookie =
-                    "connect.sid=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;"; // 刪除 Session Cookie
-                  window.location.href = "login.html"; // 跳轉至登入頁
-                } else {
-                  alert("❌ 登出失敗，請重試！");
+                  sessionStorage.clear();
+                  window.location.href = "login.html";
                 }
-              })
-              .catch((error) => {
-                console.error("❌ 登出請求失敗:", error);
-                alert("❌ 無法連接伺服器，請檢查網絡！");
               });
           });
 
-        // **🛑 按鈕權限控制與跳轉**
-
-        // 1. 歷史紀錄
-        document
-          .getElementById("history-btn")
-          .addEventListener("click", function () {
-            checkPermissionAndGo("history.html", "查看歷史紀錄");
-          });
-
-        // 2. 學生清單
-        document
-          .getElementById("student-list-btn")
-          .addEventListener("click", function () {
-            checkPermissionAndGo("student_list.html", "查看學生名單");
-          });
-
-        // 3. 學生資訊匯入 (新增)
-        document
-          .getElementById("import-student-btn")
-          .addEventListener("click", function () {
-            checkPermissionAndGo("add_student.html", "匯入學生資料");
-          });
-
-        // 通用權限檢查函式
-        function checkPermissionAndGo(targetUrl, actionName) {
-          fetch("/api/check-login")
-            .then((response) => response.json())
-            .then((data) => {
-              if (data.user.username === "deming") {
-                alert(`🚫 你沒有權限${actionName}`);
-              } else {
-                location.href = targetUrl;
-              }
-            });
-        }
+        // **🔍 新增：搜尋框按 Enter 觸發搜尋**
+        const searchInput = document.getElementById("student-search-input");
+        searchInput.addEventListener("keypress", function (event) {
+          if (event.key === "Enter") {
+            const id = this.value.trim();
+            if (id) searchStudent(id);
+          }
+        });
       });
+
+      // ... (原有的 toggleView, updateTime, loadGroups, confirmClear 保持不變) ...
+      window.toggleView = function (mode, isAdminUser = true) {
+        const adminDashboard = document.getElementById("admin-dashboard");
+        const leaderView = document.getElementById("dorm-leader-view");
+        const mainHeader = document.getElementById("main-header");
+        const backBtn = document.getElementById("back-to-dashboard-btn");
+
+        if (mode === "admin") {
+          document.body.classList.add("admin-mode");
+          adminDashboard.classList.remove("hidden");
+          leaderView.classList.add("hidden");
+          mainHeader.classList.add("hidden");
+        } else {
+          document.body.classList.remove("admin-mode");
+          adminDashboard.classList.add("hidden");
+          leaderView.classList.remove("hidden");
+          mainHeader.classList.remove("hidden");
+          if (isAdminUser) backBtn.classList.remove("hidden");
+        }
+      };
+
+      function updateTime() {
+        const now = new Date();
+        const dateString = now.toLocaleDateString("zh-TW", {
+          month: "long",
+          day: "numeric",
+          weekday: "long",
+        });
+        const timeEl = document.getElementById("system-time");
+        if (timeEl) timeEl.textContent = dateString;
+      }
+
+      function loadGroups() {
+        fetch("/api/groups")
+          .then((response) => response.json())
+          .then((groups) => {
+            const groupContainer = document.getElementById("group-container");
+            groupContainer.innerHTML = "";
+            groups.forEach((group) => {
+              let groupCard = document.createElement("div");
+              groupCard.className = "group-card-simple";
+              groupCard.onclick = () =>
+                (location.href = `attendance.html?group=${encodeURIComponent(
+                  group
+                )}`);
+              groupCard.innerHTML = `<h3>${group}</h3><p>點擊進入</p>`;
+              groupContainer.appendChild(groupCard);
+            });
+          });
+      }
+
+      window.confirmClear = function () {
+        if (confirm("⚠️ 危險操作：確定要清空紀錄嗎？")) {
+          fetch("/api/attendance/clear", { method: "DELETE" }).then(() =>
+            alert("已清空")
+          );
+        }
+      };
+
+      // ==========================================
+      // 🔍 新增：搜尋相關功能函式
+      // ==========================================
+      function searchStudent(id) {
+        // 清空輸入框並失去焦點 (收起手機鍵盤)
+        document.getElementById("student-search-input").blur();
+
+        fetch(`/api/student/search?id=${encodeURIComponent(id)}`)
+          .then((res) => res.json())
+          .then((data) => {
+            if (!data.success) {
+              alert(data.message || "找不到該學生");
+              return;
+            }
+            showModal(data.data);
+          })
+          .catch((err) => {
+            console.error(err);
+            alert("搜尋發生錯誤");
+          });
+      }
+
+      function showModal(student) {
+        document.getElementById("modal-name").textContent = student.name;
+        document.getElementById("modal-id").textContent = student.id;
+        document.getElementById("modal-room").textContent = student.roomNumber;
+        document.getElementById("modal-group").textContent = student.group_name;
+        document.getElementById("modal-phone").textContent =
+          student.phoneNumber || "無資料";
+
+        // 處理今日狀態
+        const statusContainer = document.getElementById(
+          "modal-status-container"
+        );
+        let statusHtml = '<span class="status-badge">今日未點名</span>';
+
+        if (student.today_status) {
+          let statusClass = "";
+          if (student.today_status === "在寢") statusClass = "present";
+          else if (
+            student.today_status === "未歸" ||
+            student.today_status === "缺席"
+          )
+            statusClass = "absent";
+          else statusClass = "late";
+
+          statusHtml = `<span class="status-badge ${statusClass}">${student.today_status}</span>`;
+        }
+        statusContainer.innerHTML = statusHtml;
+
+        // 顯示彈窗
+        const modal = document.getElementById("search-modal");
+        modal.classList.add("active");
+      }
+
+      function closeModal(event, force = false) {
+        if (force || event.target.id === "search-modal") {
+          document.getElementById("search-modal").classList.remove("active");
+          document.getElementById("student-search-input").value = ""; // 搜尋完清空
+        }
+      }
     </script>
   </body>
 </html>

@@ -14,7 +14,32 @@
 
       <main>
         <section class="card">
-          <h2>選擇學生群組</h2>
+          <h2>篩選條件</h2>
+
+          <div
+            class="filter-section"
+            style="
+              margin-bottom: 15px;
+              border-bottom: 1px dashed #eee;
+              padding-bottom: 15px;
+            "
+          >
+            <label for="studentSearch">學號搜尋：</label>
+            <div style="flex: 1; position: relative">
+              <input
+                type="text"
+                id="studentSearch"
+                placeholder="輸入學號後按下 Enter 搜尋..."
+                style="
+                  width: 100%;
+                  padding: 10px;
+                  border: 1px solid #ddd;
+                  border-radius: 4px;
+                "
+              />
+            </div>
+          </div>
+
           <div class="filter-section">
             <label for="groupSelect">選擇群組：</label>
             <select id="groupSelect">
@@ -37,7 +62,7 @@
               </thead>
               <tbody id="studentTableBody">
                 <tr>
-                  <td colspan="4">請選擇群組以顯示學生</td>
+                  <td colspan="4">請使用搜尋或選擇群組以顯示學生</td>
                 </tr>
               </tbody>
             </table>
