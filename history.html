@@ -13,48 +13,63 @@
       </header>
 
       <main>
-        <section class="card">
+        <!-- 篩選列 -->
+        <section class="card" style="padding: 20px 24px;">
           <div class="filter-section">
             <div class="filter-row">
-              <label for="date-select">選擇日期:</label>
+              <label for="date-select">日期</label>
               <select id="date-select">
-                <option value="">-- 請選擇日期 --</option>
+                <option value="">-- 全部日期 --</option>
               </select>
             </div>
             <div class="filter-row">
-              <label for="group-select">選擇群組:</label>
+              <label for="group-select">群組</label>
               <select id="group-select">
                 <option value="">全部群組</option>
               </select>
             </div>
             <button id="filter-btn" class="btn primary">查詢</button>
           </div>
+        </section>
 
-          <div class="table-container">
+        <!-- 統計摘要 -->
+        <div id="summary-section" style="display:none; margin-bottom: 12px;"></div>
+
+        <!-- 資料表格 -->
+        <section class="card" style="padding: 0; overflow: hidden;">
+          <div class="table-container" style="margin: 0; border: none; border-radius: 0;">
             <table id="history-table">
               <thead>
                 <tr>
-                  <th>日期</th>
-                  <th>房號-樓層床位</th>
+                  <th style="width:90px;">日期</th>
+                  <th style="width:80px;">房號</th>
                   <th>姓名</th>
-                  <th>狀態</th>
+                  <th>狀態／操作</th>
                 </tr>
               </thead>
-              <tbody id="history-data"></tbody>
+              <tbody id="history-data">
+                <tr>
+                  <td colspan="4" class="table-placeholder">載入中...</td>
+                </tr>
+              </tbody>
             </table>
           </div>
 
-          <div class="action-buttons">
-            <button id="export-btn" class="btn secondary">匯出為 Excel</button>
-            <button id="export-csv-btn" class="btn secondary">匯出 CSV</button>
-
-            <button id="clear-btn" class="btn danger">⚠️ 清空所有紀錄</button>
-
-            <button class="btn secondary" onclick="location.href='index.html'">
-              返回首頁
-            </button>
+          <!-- 分頁列 -->
+          <div id="pagination-bar" class="pagination-bar hidden">
+            <button id="prev-btn" class="btn secondary btn-page">← 上一頁</button>
+            <span id="page-info" class="page-info"></span>
+            <button id="next-btn" class="btn secondary btn-page">下一頁 →</button>
           </div>
         </section>
+
+        <!-- 操作按鈕 -->
+        <div class="action-buttons" style="margin-top: 16px;">
+          <button id="export-excel-btn" class="btn secondary">匯出 Excel</button>
+          <button id="export-csv-btn" class="btn secondary">匯出 CSV</button>
+          <button id="clear-btn" class="btn danger">清空所有紀錄</button>
+          <button class="btn secondary" onclick="location.href='index.html'">返回首頁</button>
+        </div>
       </main>
 
       <footer>

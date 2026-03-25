@@ -37,7 +37,7 @@
           <div class="grid-menu">
             <div
               class="menu-item action-primary"
-              onclick="toggleView('leader')"
+              onclick="startAdminAttendance()"
             >
               <div class="icon-box">📝</div>
               <span>開始點名</span>
@@ -69,6 +69,13 @@
               <span>清空紀錄</span>
             </div>
             <div
+              class="menu-item"
+              onclick="location.href='change_password.html'"
+            >
+              <div class="icon-box">🔑</div>
+              <span>修改密碼</span>
+            </div>
+            <div
               class="menu-item logout"
               onclick="document.getElementById('logout-btn-header').click()"
             >
@@ -89,10 +96,39 @@
             </button>
           </div>
 
-          <section class="card-simple">
-            <h2>選擇點名群組</h2>
-            <div class="group-selection" id="group-container">
-              <p>正在載入群組...</p>
+          <!-- 樓長模式選擇（deming 登入後才顯示） -->
+          <section id="leader-mode-section" class="card-simple hidden">
+            <h2>請選擇操作</h2>
+            <div class="group-selection" style="margin-top: 12px;">
+              <div class="group-card-simple" onclick="startTodayAttendance()">
+                <h3>📝 今日點名</h3>
+                <p>進行今天的點名</p>
+              </div>
+              <div class="group-card-simple" onclick="showMakeupSection()">
+                <h3>📅 補點名</h3>
+                <p>補登過去某日點名</p>
+              </div>
+            </div>
+          </section>
+
+          <!-- 補點名日期選擇 -->
+          <section id="makeup-date-section" class="card-simple hidden">
+            <h2>選擇補點日期</h2>
+            <div style="margin-top: 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+              <input type="date" id="makeup-date-input"
+                style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 1rem;" />
+              <button class="btn primary" onclick="confirmMakeupDate()">確認日期</button>
+              <button class="btn secondary" onclick="showLeaderModeSelect()">← 返回</button>
+            </div>
+          </section>
+
+          <!-- 群組選擇（今日點名 & 補點名共用） -->
+          <section id="group-section" class="card-simple hidden">
+            <h2 id="group-section-title">選擇點名群組</h2>
+            <p id="group-section-subtitle" style="color: #888; font-size: 0.9rem; margin: 4px 0 12px;"></p>
+            <div class="group-selection" id="group-container"></div>
+            <div style="margin-top: 14px;">
+              <button class="btn secondary" id="group-back-btn">← 返回</button>
             </div>
           </section>
         </div>
@@ -129,9 +165,14 @@
             </div>
           </div>
 
+          <div id="modal-history" style="margin-top:12px; text-align:left;">
+            <label style="font-size:0.85rem; color:#888;">最近點名紀錄</label>
+            <div id="modal-history-list" style="margin-top:6px; max-height:140px; overflow-y:auto; font-size:0.85rem;"></div>
+          </div>
+
           <button
             class="btn secondary"
-            style="width: 100%"
+            style="width: 100%; margin-top:12px;"
             onclick="closeModal(null, true)"
           >
             關閉
@@ -141,8 +182,10 @@
     </div>
 
     <script>
+      let selectedDate = null; // null = 今日；字串 = 補點名日期
+      let isDeming = false;
+
       document.addEventListener("DOMContentLoaded", function () {
-        // ... (原有的登入檢查邏輯保持不變) ...
         fetch("/api/check-login")
           .then((response) => response.json())
           .then((data) => {
@@ -152,43 +195,35 @@
             }
             const user = data.user;
             const displayName = user.display_name.split("（")[0];
-            document.getElementById(
-              "welcome-message"
-            ).textContent = `Hi, ${displayName}`;
+            document.getElementById("welcome-message").textContent = `Hi, ${displayName}`;
 
             if (user.username === "deming") {
+              isDeming = true;
               toggleView("leader", false);
+              showLeaderModeSelect();
             } else {
-              // 管理員模式
               const now = new Date();
               const hour = now.getHours();
               let greeting = "早安";
               if (hour >= 11) greeting = "午安";
               if (hour >= 18) greeting = "晚安";
-              document.getElementById(
-                "admin-welcome"
-              ).textContent = `${greeting}，${displayName}。`;
+              document.getElementById("admin-welcome").textContent = `${greeting}，${displayName}。`;
               updateTime();
               toggleView("admin");
             }
-            loadGroups();
           });
 
-        // 登出
-        document
-          .getElementById("logout-btn-header")
-          .addEventListener("click", function () {
-            fetch("/api/logout", { method: "POST" })
-              .then((res) => res.json())
-              .then((data) => {
-                if (data.success) {
-                  sessionStorage.clear();
-                  window.location.href = "login.html";
-                }
-              });
-          });
+        document.getElementById("logout-btn-header").addEventListener("click", function () {
+          fetch("/api/logout", { method: "POST" })
+            .then((res) => res.json())
+            .then((data) => {
+              if (data.success) {
+                sessionStorage.clear();
+                window.location.href = "login.html";
+              }
+            });
+        });
 
-        // **🔍 新增：搜尋框按 Enter 觸發搜尋**
         const searchInput = document.getElementById("student-search-input");
         searchInput.addEventListener("keypress", function (event) {
           if (event.key === "Enter") {
@@ -196,9 +231,13 @@
             if (id) searchStudent(id);
           }
         });
+
+        // 補點名日期：限制最多到今天
+        const today = new Date().toLocaleDateString("sv-SE");
+        document.getElementById("makeup-date-input").max = today;
       });
 
-      // ... (原有的 toggleView, updateTime, loadGroups, confirmClear 保持不變) ...
+      // ── 畫面切換 ──────────────────────────────────
       window.toggleView = function (mode, isAdminUser = true) {
         const adminDashboard = document.getElementById("admin-dashboard");
         const leaderView = document.getElementById("dorm-leader-view");
@@ -219,34 +258,119 @@
         }
       };
 
-      function updateTime() {
-        const now = new Date();
-        const dateString = now.toLocaleDateString("zh-TW", {
-          month: "long",
-          day: "numeric",
-          weekday: "long",
-        });
-        const timeEl = document.getElementById("system-time");
-        if (timeEl) timeEl.textContent = dateString;
+      function hideAllLeaderSections() {
+        document.getElementById("leader-mode-section").classList.add("hidden");
+        document.getElementById("makeup-date-section").classList.add("hidden");
+        document.getElementById("group-section").classList.add("hidden");
       }
 
+      // 樓長：顯示模式選擇
+      function showLeaderModeSelect() {
+        hideAllLeaderSections();
+        document.getElementById("leader-mode-section").classList.remove("hidden");
+      }
+
+      // 樓長：顯示補點名日期選擇
+      window.showMakeupSection = function () {
+        hideAllLeaderSections();
+        document.getElementById("makeup-date-section").classList.remove("hidden");
+      };
+
+      // 樓長：今日點名
+      window.startTodayAttendance = function () {
+        selectedDate = null;
+        showGroupSection("今日點名 — 選擇群組", "", () => showLeaderModeSelect());
+      };
+
+      // 樓長：確認補點名日期
+      window.confirmMakeupDate = function () {
+        const input = document.getElementById("makeup-date-input");
+        const date = input.value;
+        if (!date) { alert("請選擇日期"); return; }
+        selectedDate = date;
+        const [y, m, d] = date.split("-");
+        const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
+        const weekday = weekdays[new Date(date + "T00:00:00").getDay()];
+        const label = `${y}/${m}/${d}（週${weekday}）`;
+        showGroupSection("補點名 — 選擇群組", label, () => showMakeupSection());
+      };
+
+      // 管理員：開始點名
+      window.startAdminAttendance = function () {
+        selectedDate = null;
+        toggleView("leader");
+        showGroupSection("選擇點名群組", "", () => toggleView("admin"));
+      };
+
+      // 顯示群組選擇區塊
+      function showGroupSection(title, subtitle, backAction) {
+        hideAllLeaderSections();
+        document.getElementById("group-section-title").textContent = title;
+        document.getElementById("group-section-subtitle").textContent = subtitle;
+        document.getElementById("group-back-btn").onclick = backAction;
+        document.getElementById("group-section").classList.remove("hidden");
+        loadGroups();
+      }
+
+      // ── 載入群組 ──────────────────────────────────
       function loadGroups() {
         fetch("/api/groups")
           .then((response) => response.json())
           .then((groups) => {
             const groupContainer = document.getElementById("group-container");
             groupContainer.innerHTML = "";
+
+            if (groups.length === 0) {
+              groupContainer.innerHTML = "<p>尚無群組資料</p>";
+              return;
+            }
+
             groups.forEach((group) => {
-              let groupCard = document.createElement("div");
-              groupCard.className = "group-card-simple";
-              groupCard.onclick = () =>
-                (location.href = `attendance.html?group=${encodeURIComponent(
-                  group
-                )}`);
-              groupCard.innerHTML = `<h3>${group}</h3><p>點擊進入</p>`;
-              groupContainer.appendChild(groupCard);
+              const card = document.createElement("div");
+              card.className = "group-card-simple";
+
+              if (selectedDate) {
+                // 補點名模式：先檢查是否已有紀錄
+                card.innerHTML = `<h3>${group}</h3><p>檢查中...</p>`;
+                fetch(`/api/attendance/check?date=${encodeURIComponent(selectedDate)}&group=${encodeURIComponent(group)}`)
+                  .then((r) => r.json())
+                  .then((result) => {
+                    if (result.exists) {
+                      card.innerHTML = `<h3>${group}</h3><p style="color:#27ae60; font-weight:bold;">✅ 已完成點名</p>`;
+                      card.style.opacity = "0.6";
+                      card.style.cursor = "default";
+                      card.onclick = () => alert(`「${group}」在 ${selectedDate} 已完成點名（共 ${result.count} 筆紀錄）`);
+                    } else {
+                      card.innerHTML = `<h3>${group}</h3><p style="color:#e67e22;">⚠️ 尚未點名，點擊補點</p>`;
+                      card.onclick = () => {
+                        location.href = `attendance.html?group=${encodeURIComponent(group)}&date=${encodeURIComponent(selectedDate)}`;
+                      };
+                    }
+                  })
+                  .catch(() => {
+                    card.innerHTML = `<h3>${group}</h3><p>無法確認狀態</p>`;
+                  });
+              } else {
+                // 今日點名模式：直接進入
+                card.innerHTML = `<h3>${group}</h3><p>點擊進入</p>`;
+                card.onclick = () => {
+                  location.href = `attendance.html?group=${encodeURIComponent(group)}`;
+                };
+              }
+
+              groupContainer.appendChild(card);
             });
           });
+      }
+
+      // ── 其他功能 ──────────────────────────────────
+      function updateTime() {
+        const now = new Date();
+        const dateString = now.toLocaleDateString("zh-TW", {
+          month: "long", day: "numeric", weekday: "long",
+        });
+        const timeEl = document.getElementById("system-time");
+        if (timeEl) timeEl.textContent = dateString;
       }
 
       window.confirmClear = function () {
@@ -306,6 +430,26 @@
           statusHtml = `<span class="status-badge ${statusClass}">${student.today_status}</span>`;
         }
         statusContainer.innerHTML = statusHtml;
+
+        // 載入個人歷史紀錄
+        const historyList = document.getElementById("modal-history-list");
+        historyList.textContent = "載入中...";
+        fetch(`/api/student/history?id=${encodeURIComponent(student.id)}`)
+          .then((r) => r.json())
+          .then((h) => {
+            if (!h.success || h.data.length === 0) {
+              historyList.textContent = "尚無點名紀錄";
+              return;
+            }
+            historyList.innerHTML = h.data.map((r) => {
+              const color = r.status === "未歸" ? "#e74c3c" : r.status === "晚歸" ? "#e67e22" : "#27ae60";
+              return `<div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid #f0f0f0;">
+                <span>${r.date}</span>
+                <span style="color:${color}; font-weight:bold;">${r.status}</span>
+              </div>`;
+            }).join("");
+          })
+          .catch(() => { historyList.textContent = "載入失敗"; });
 
         // 顯示彈窗
         const modal = document.getElementById("search-modal");

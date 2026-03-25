@@ -3,7 +3,6 @@ const express = require("express");
 const sqlite3 = require("sqlite3").verbose();
 const bodyParser = require("body-parser");
 const path = require("path");
-const cors = require("cors");
 const bcrypt = require("bcrypt");
 const session = require("express-session");
 const cookieParser = require("cookie-parser");
@@ -19,21 +18,28 @@ const host = "0.0.0.0";
 const upload = multer({ storage: multer.memoryStorage() });
 
 app.use(cookieParser());
-app.use(
-  cors({
-    origin: "*",
-    methods: "GET,POST,OPTIONS",
-    allowedHeaders: "Content-Type",
-    credentials: true,
-  })
-);
 app.use(bodyParser.json());
+
+// 封鎖敏感檔案的直接存取
+const BLOCKED_PATHS = [
+  ".env", "ini.env", "server.js", "package.json", "package-lock.json",
+  "cookies.txt", ".db",
+];
+app.use((req, res, next) => {
+  const p = req.path.toLowerCase();
+  const isBlocked = BLOCKED_PATHS.some(
+    (blocked) => p === "/" + blocked || p.endsWith(blocked)
+  );
+  if (isBlocked) return res.status(403).send("Forbidden");
+  next();
+});
+
 app.use(express.static(__dirname));
 
 app.use(
   session({
     store: new SQLiteStore({ db: "sessions.db", dir: "./", ttl: 86400 }),
-    secret: "secret_key",
+    secret: process.env.SESSION_SECRET || "fallback-secret-please-set-env",
     resave: false,
     saveUninitialized: false,
     cookie: { secure: false, httpOnly: true, maxAge: 24 * 60 * 60 * 1000 },
@@ -46,20 +52,16 @@ const db = new sqlite3.Database("./dormitory.db", (err) => {
 });
 
 const users = [
-  { username: "xm2801", password: "admin", display_name: "德銘宿舍羅老師" },
-  {
-    username: "12130340",
-    password: "Yucheng0803",
-    display_name: "林煜晟（系統管理）",
-  },
-  { username: "deming", password: "1234", display_name: "宿舍各樓長" },
+  { username: "xm2801", password: process.env.PASSWORD_XM2801 || "admin", display_name: "德銘宿舍羅老師" },
+  { username: "12130340", password: process.env.PASSWORD_YUCHENG || "Yucheng0803", display_name: "林煜晟（系統管理）" },
+  { username: "deming", password: process.env.PASSWORD_DEMING || "1234", display_name: "宿舍各樓長" },
 ];
 
 users.forEach((user) => {
   bcrypt.hash(user.password, 10, (err, hash) => {
     if (!err) {
       db.run(
-        `INSERT OR IGNORE INTO users (username, password, display_name) VALUES (?, ?, ?)`,
+        `INSERT OR REPLACE INTO users (username, password, display_name) VALUES (?, ?, ?)`,
         [user.username, hash, user.display_name]
       );
     }
@@ -70,6 +72,7 @@ const protectedPages = [
   "add_student.html",
   "history.html",
   "student_list.html",
+  "change_password.html",
 ];
 
 const requireLogin = (req, res, next) => {
@@ -156,7 +159,7 @@ app.get("/api/student/search", requireLogin, (req, res) => {
     return res.status(400).json({ success: false, message: "請輸入學號" });
 
   // 取得今日日期 (YYYY-MM-DD)，這裡使用 ISO 格式取日期部分
-  const today = new Date().toISOString().split("T")[0];
+  const today = new Date().toLocaleDateString("sv-SE"); // YYYY-MM-DD，使用本地時區
 
   const sql = `
     SELECT s.id, s.name, s.roomNumber, s.phoneNumber, s.group_name, a.status as today_status
@@ -178,22 +181,48 @@ app.get("/api/student/search", requireLogin, (req, res) => {
 
 app.get("/api/attendance/history", requireLogin, (req, res) => {
   const { date, group } = req.query;
-  let query = `SELECT attendance.date, attendance.student_id, attendance.studentName, attendance.status, students.roomNumber FROM attendance LEFT JOIN students ON attendance.student_id = students.id WHERE 1=1`;
-  const params = [];
-  if (date) {
-    query += " AND attendance.date = ?";
-    params.push(date);
-  }
-  if (group) {
-    query += " AND students.group_name = ?";
-    params.push(group);
-  }
-  query += " ORDER BY students.roomNumber ASC, attendance.studentName ASC";
+  const page     = Math.max(1, parseInt(req.query.page) || 1);
+  const pageSize = Math.min(10000, Math.max(10, parseInt(req.query.pageSize) || 50));
+  const offset   = (page - 1) * pageSize;
 
-  db.all(query, params, (err, records) => {
-    if (err)
-      return res.status(500).json({ success: false, message: "查詢失敗" });
-    res.json({ success: true, data: records || [] });
+  const baseFrom = `FROM attendance LEFT JOIN students ON attendance.student_id = students.id WHERE 1=1`;
+  const params = [];
+  let where = "";
+
+  if (date)  { where += " AND attendance.date = ?";           params.push(date); }
+  if (group) { where += " AND TRIM(students.group_name) = ?"; params.push(group.trim()); }
+
+  const orderBy = " ORDER BY students.roomNumber ASC, attendance.studentName ASC";
+  const selectFields = `SELECT attendance.date, attendance.student_id, attendance.studentName, attendance.status, students.roomNumber `;
+
+  // 1. 取得總筆數
+  db.get(`SELECT COUNT(*) as total ${baseFrom}${where}`, params, (err, countRow) => {
+    if (err) return res.status(500).json({ success: false, message: "查詢失敗" });
+
+    const total      = countRow.total;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+    // 2. 取得各狀態統計（不受分頁影響）
+    db.all(
+      `SELECT status, COUNT(*) as count ${baseFrom}${where} GROUP BY status`,
+      params,
+      (err, summaryRows) => {
+        const summary = { 在寢: 0, 未歸: 0, 晚歸: 0 };
+        if (!err && summaryRows) {
+          summaryRows.forEach(r => { if (r.status in summary) summary[r.status] = r.count; });
+        }
+
+        // 3. 取得分頁資料
+        db.all(
+          `${selectFields}${baseFrom}${where}${orderBy} LIMIT ? OFFSET ?`,
+          [...params, pageSize, offset],
+          (err, records) => {
+            if (err) return res.status(500).json({ success: false, message: "查詢失敗" });
+            res.json({ success: true, data: records || [], total, page, totalPages, summary });
+          }
+        );
+      }
+    );
   });
 });
 
@@ -214,50 +243,57 @@ app.post("/api/attendance/submit", requireLogin, (req, res) => {
   if (!date || !group || !attendanceData)
     return res.status(400).json({ error: "資料不完整" });
 
+  const studentIds = attendanceData.map((s) => s.student_id);
+  const placeholders = studentIds.map(() => "?").join(",");
+
   db.serialize(() => {
-    const studentIds = attendanceData.map((s) => s.student_id);
     db.all(
-      `SELECT student_id FROM attendance WHERE date = ? AND student_id IN (${studentIds
-        .map(() => "?")
-        .join(",")})`,
+      `SELECT student_id FROM attendance WHERE date = ? AND student_id IN (${placeholders})`,
       [date, ...studentIds],
       (err, rows) => {
         if (err) return res.status(500).json({ error: "查詢失敗" });
 
-        const alreadyMarked = rows.map((r) => r.student_id);
+        const alreadyMarked = new Set(rows.map((r) => r.student_id));
         const newAttendance = attendanceData.filter(
-          (s) => !alreadyMarked.includes(s.student_id)
+          (s) => !alreadyMarked.has(s.student_id)
         );
 
         if (newAttendance.length === 0)
           return res.status(409).json({ error: "所有學生均已點名" });
 
-        const stmt = db.prepare(
-          "INSERT INTO attendance (date, student_id, studentName, status, roomNumber) VALUES (?, ?, ?, ?, ?)"
-        );
-        let completed = 0;
-        let errors = [];
+        const newIds = newAttendance.map((s) => s.student_id);
+        const newPlaceholders = newIds.map(() => "?").join(",");
 
-        newAttendance.forEach((s) => {
-          db.get(
-            "SELECT roomNumber FROM students WHERE id = ?",
-            [s.student_id],
-            (err, row) => {
-              let roomNum = row ? row.roomNumber : "N/A";
-              if (!row) errors.push(s.student_id);
+        // 一次查詢取得所有房號，避免巢狀非同步 race condition
+        db.all(
+          `SELECT id, roomNumber FROM students WHERE id IN (${newPlaceholders})`,
+          newIds,
+          (err, studentRows) => {
+            if (err) return res.status(500).json({ error: "查詢失敗" });
+
+            const roomMap = {};
+            studentRows.forEach((r) => { roomMap[r.id] = r.roomNumber; });
+
+            const stmt = db.prepare(
+              "INSERT INTO attendance (date, student_id, studentName, status, roomNumber) VALUES (?, ?, ?, ?, ?)"
+            );
+            let hasErrors = false;
+
+            newAttendance.forEach((s) => {
+              const roomNum = roomMap[s.student_id] || "N/A";
+              if (!roomMap[s.student_id]) hasErrors = true;
               stmt.run(date, s.student_id, s.studentName, s.status, roomNum);
-              completed++;
-              if (completed === newAttendance.length) {
-                stmt.finalize();
-                res.json({
-                  success: true,
-                  message:
-                    errors.length > 0 ? "點名成功(部分無房號)" : "點名成功",
-                });
-              }
-            }
-          );
-        });
+            });
+
+            stmt.finalize((err) => {
+              if (err) return res.status(500).json({ error: "寫入失敗" });
+              res.json({
+                success: true,
+                message: hasErrors ? "點名成功(部分無房號)" : "點名成功",
+              });
+            });
+          }
+        );
       }
     );
   });
@@ -437,6 +473,157 @@ app.post(
     }
   }
 );
+
+// 檢查某日某群組是否已有點名紀錄
+app.get("/api/attendance/check", requireLogin, (req, res) => {
+  const { date, group } = req.query;
+  if (!date || !group) return res.status(400).json({ error: "缺少參數" });
+
+  db.get(
+    `SELECT COUNT(*) as count FROM attendance a
+     LEFT JOIN students s ON a.student_id = s.id
+     WHERE a.date = ? AND TRIM(s.group_name) = ?`,
+    [date, group.trim()],
+    (err, row) => {
+      if (err) return res.status(500).json({ error: "查詢失敗" });
+      res.json({ exists: row.count > 0, count: row.count });
+    }
+  );
+});
+
+// 查詢單一學生的歷史點名紀錄（最近 30 天）
+app.get("/api/student/history", requireLogin, (req, res) => {
+  const { id } = req.query;
+  if (!id) return res.status(400).json({ success: false, message: "請輸入學號" });
+
+  db.all(
+    `SELECT date, status FROM attendance WHERE student_id = ? ORDER BY date DESC LIMIT 30`,
+    [id],
+    (err, rows) => {
+      if (err) return res.status(500).json({ success: false, message: "資料庫錯誤" });
+      res.json({ success: true, data: rows });
+    }
+  );
+});
+
+// 修改單筆點名狀態
+app.patch("/api/attendance/update", requireLogin, (req, res) => {
+  const { student_id, date, status } = req.body;
+  if (!student_id || !date || !status)
+    return res.status(400).json({ error: "資料不完整" });
+
+  db.run(
+    "UPDATE attendance SET status = ? WHERE student_id = ? AND date = ?",
+    [status, student_id, date],
+    function (err) {
+      if (err) return res.status(500).json({ error: "更新失敗" });
+      if (this.changes === 0) return res.status(404).json({ error: "找不到紀錄" });
+      res.json({ success: true, message: "已更新狀態" });
+    }
+  );
+});
+
+// 刪除單筆點名紀錄
+app.delete("/api/attendance/delete", requireLogin, (req, res) => {
+  if (req.session.user.username === "deming")
+    return res.status(403).json({ error: "無權限" });
+
+  const { student_id, date } = req.query;
+  if (!student_id || !date)
+    return res.status(400).json({ error: "資料不完整" });
+
+  db.run(
+    "DELETE FROM attendance WHERE student_id = ? AND date = ?",
+    [student_id, date],
+    function (err) {
+      if (err) return res.status(500).json({ error: "刪除失敗" });
+      if (this.changes === 0) return res.status(404).json({ error: "找不到紀錄" });
+      res.json({ success: true, message: "已刪除紀錄" });
+    }
+  );
+});
+
+// 匯出 Excel
+app.get("/api/attendance/export", requireLogin, (req, res) => {
+  const { date, group } = req.query;
+  if (!date) return res.status(400).json({ error: "請選擇日期" });
+
+  let query = `SELECT a.date, a.student_id, a.studentName, a.status, s.roomNumber
+               FROM attendance a LEFT JOIN students s ON a.student_id = s.id
+               WHERE a.date = ?`;
+  const params = [date];
+  if (group) { query += " AND s.group_name = ?"; params.push(group); }
+  query += " ORDER BY s.roomNumber ASC, a.studentName ASC";
+
+  db.all(query, params, async (err, records) => {
+    if (err) return res.status(500).json({ error: "查詢失敗" });
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("點名紀錄");
+
+    sheet.columns = [
+      { header: "日期", key: "date", width: 14 },
+      { header: "房號", key: "roomNumber", width: 10 },
+      { header: "學生姓名", key: "studentName", width: 14 },
+      { header: "狀態", key: "status", width: 10 },
+    ];
+
+    // 標題列樣式
+    sheet.getRow(1).font = { bold: true };
+    sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF4472C4" } };
+    sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+
+    records.forEach((r) => {
+      const row = sheet.addRow({
+        date: r.date,
+        roomNumber: r.roomNumber || "N/A",
+        studentName: r.studentName,
+        status: r.status,
+      });
+      if (r.status === "未歸") {
+        row.getCell("status").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF4C4C" } };
+        row.getCell("status").font = { color: { argb: "FFFFFFFF" } };
+      } else if (r.status === "晚歸") {
+        row.getCell("status").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFC000" } };
+      }
+    });
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="attendance_${date}.xlsx"`);
+    await workbook.xlsx.write(res);
+    res.end();
+  });
+});
+
+// 修改密碼
+app.post("/api/change-password", requireLogin, (req, res) => {
+  if (req.session.user.username === "deming")
+    return res.status(403).json({ success: false, message: "無權限" });
+
+  const { oldPassword, newPassword } = req.body;
+  if (!oldPassword || !newPassword)
+    return res.status(400).json({ success: false, message: "資料不完整" });
+  if (newPassword.length < 6)
+    return res.status(400).json({ success: false, message: "新密碼至少需 6 個字元" });
+
+  const username = req.session.user.username;
+  db.get("SELECT password FROM users WHERE username = ?", [username], (err, user) => {
+    if (err || !user) return res.status(500).json({ success: false, message: "查詢失敗" });
+
+    bcrypt.compare(oldPassword, user.password, (err, match) => {
+      if (!match) return res.status(401).json({ success: false, message: "舊密碼錯誤" });
+
+      bcrypt.hash(newPassword, 10, (err, hash) => {
+        if (err) return res.status(500).json({ success: false, message: "加密失敗" });
+
+        db.run("UPDATE users SET password = ? WHERE username = ?", [hash, username], (err) => {
+          if (err) return res.status(500).json({ success: false, message: "更新失敗" });
+          res.json({ success: true, message: "密碼已更新" });
+        });
+      });
+    });
+  });
+});
 
 // 9. 登出
 app.post("/api/logout", (req, res) => {

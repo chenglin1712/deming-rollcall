@@ -1,237 +1,288 @@
+// ── 分頁狀態 ──────────────────────────────
+let currentPage = 1;
+let totalPages  = 1;
+const PAGE_SIZE = 50;
+
+// ── 初始化 ────────────────────────────────
 document.addEventListener("DOMContentLoaded", function () {
-  // 頁面加載時載入可選的歷史點名日期和群組
-  loadDateOptions();
   loadGroupOptions();
+  loadDateOptions(); // 載入後自動選最新日期並查詢
 
-  // 綁定按鈕事件
-  document
-    .getElementById("filter-btn")
-    .addEventListener("click", loadHistoryData);
-  document
-    .getElementById("export-btn")
-    .addEventListener("click", exportToExcel);
-  document
-    .getElementById("export-csv-btn")
-    .addEventListener("click", exportToCSV);
+  document.getElementById("filter-btn").addEventListener("click", () => {
+    currentPage = 1;
+    loadHistoryData();
+  });
 
-  // 🆕 綁定清空按鈕事件
+  document.getElementById("prev-btn").addEventListener("click", () => {
+    if (currentPage > 1) { currentPage--; loadHistoryData(); }
+  });
+
+  document.getElementById("next-btn").addEventListener("click", () => {
+    if (currentPage < totalPages) { currentPage++; loadHistoryData(); }
+  });
+
+  document.getElementById("export-excel-btn").addEventListener("click", exportToExcel);
+  document.getElementById("export-csv-btn").addEventListener("click", exportToCSV);
+
   const clearBtn = document.getElementById("clear-btn");
-  if (clearBtn) {
-    clearBtn.addEventListener("click", clearAllHistory);
-  }
-
-  // 頁面加載時直接顯示所有歷史紀錄
-  loadHistoryData();
+  if (clearBtn) clearBtn.addEventListener("click", clearAllHistory);
 });
 
-// **🔹 載入歷史點名日期**
+// ── 載入日期選項（自動選最新日並查詢）────
 function loadDateOptions() {
   fetch("/api/attendance/dates")
-    .then((response) => {
-      if (!response.ok) {
-        throw new Error("❌ 無法獲取日期列表");
-      }
-      return response.json();
+    .then(res => {
+      if (!res.ok) throw new Error();
+      return res.json();
     })
-    .then((dates) => {
+    .then(dates => {
       const dateSelect = document.getElementById("date-select");
-      // 保留第一項提示，清空舊選項
-      dateSelect.innerHTML = '<option value="">-- 請選擇日期 --</option>';
+      dateSelect.innerHTML = '<option value="">-- 全部日期 --</option>';
 
-      dates.forEach((date) => {
+      dates.forEach(date => {
         const option = document.createElement("option");
         option.value = date;
-
-        const formattedDate = new Date(date).toLocaleDateString("zh-TW", {
-          year: "numeric",
-          month: "long",
-          day: "numeric",
-          weekday: "long",
+        option.textContent = new Date(date + "T00:00:00").toLocaleDateString("zh-TW", {
+          year: "numeric", month: "long", day: "numeric", weekday: "short",
         });
-
-        option.textContent = formattedDate;
         dateSelect.appendChild(option);
       });
+
+      if (dates.length > 0) {
+        dateSelect.value = dates[0]; // 自動選最新日
+        loadHistoryData();
+      } else {
+        showPlaceholder("目前尚無任何點名紀錄");
+      }
     })
-    .catch((error) => {
-      console.error("載入歷史日期時出錯:", error);
-    });
+    .catch(() => showPlaceholder("無法載入日期列表，請重新整理"));
 }
 
-// **🔹 載入群組名稱**
+// ── 載入群組選項 ──────────────────────────
 function loadGroupOptions() {
   fetch("/api/groups")
-    .then((response) => response.json())
-    .then((groups) => {
+    .then(res => res.json())
+    .then(groups => {
       const groupSelect = document.getElementById("group-select");
       groupSelect.innerHTML = '<option value="">全部群組</option>';
-
-      groups.forEach((group) => {
+      groups.forEach(group => {
         const option = document.createElement("option");
         option.value = group;
         option.textContent = group;
         groupSelect.appendChild(option);
       });
     })
-    .catch((error) => console.error("❌ 無法載入群組:", error));
+    .catch(() => console.error("無法載入群組"));
 }
 
-// **🔹 查詢歷史數據**
+// ── 查詢歷史資料（分頁）─────────────────
 function loadHistoryData() {
-  const date = document.getElementById("date-select").value;
+  const date  = document.getElementById("date-select").value;
   const group = document.getElementById("group-select").value.trim();
 
-  let apiUrl = "/api/attendance/history";
-  const queryParams = [];
+  const params = new URLSearchParams({ page: currentPage, pageSize: PAGE_SIZE });
+  if (date)  params.append("date",  date);
+  if (group) params.append("group", group);
 
-  if (date) queryParams.push(`date=${encodeURIComponent(date)}`);
-  if (group !== "") queryParams.push(`group=${encodeURIComponent(group)}`);
+  showPlaceholder("載入中...");
+  document.getElementById("summary-section").style.display = "none";
+  document.getElementById("pagination-bar").classList.add("hidden");
 
-  if (queryParams.length > 0) apiUrl += "?" + queryParams.join("&");
+  fetch(`/api/attendance/history?${params}`)
+    .then(res => res.json())
+    .then(data => {
+      if (!data.success) throw new Error(data.message);
 
-  fetch(apiUrl)
-    .then((response) => response.json())
-    .then((data) => {
-      console.log("API 回應資料:", data);
+      totalPages = data.totalPages || 1;
 
-      if (!data.success || !Array.isArray(data.data)) {
-        throw new Error("API 回應失敗或數據格式錯誤");
-      }
-
-      displayHistoryData(data.data);
+      renderSummary(data.summary, data.total);
+      renderTable(data.data);
+      renderPagination(data.page, data.totalPages, data.total);
     })
-    .catch((error) => {
-      console.error("載入歷史數據時出錯:", error);
-      const tableBody = document.getElementById("history-data");
-      tableBody.innerHTML =
-        "<tr><td colspan='4' style='text-align:center; color:red;'>❌ 查詢失敗或無資料</td></tr>";
+    .catch(err => {
+      console.error("載入歷史資料失敗:", err);
+      showPlaceholder("❌ 查詢失敗，請稍後再試");
     });
 }
 
-// **🔹 顯示歷史數據**
-function displayHistoryData(records) {
+// ── 渲染統計摘要（全部符合筆數）─────────
+function renderSummary(summary, total) {
+  const section = document.getElementById("summary-section");
+  if (!summary || total === 0) { section.style.display = "none"; return; }
+
+  section.style.display = "block";
+  section.innerHTML = `
+    <div class="summary-bar">
+      <span class="summary-chip present">在寢 ${summary["在寢"] || 0} 人</span>
+      <span class="summary-chip absent">未歸 ${summary["未歸"] || 0} 人</span>
+      <span class="summary-chip late">晚歸 ${summary["晚歸"] || 0} 人</span>
+      <span class="summary-chip total">共 ${total} 筆記錄</span>
+    </div>
+  `;
+}
+
+// ── 渲染資料表格 ──────────────────────────
+function renderTable(records) {
   const tableBody = document.getElementById("history-data");
-  tableBody.innerHTML = "";
 
   if (!records || records.length === 0) {
-    const emptyRow = document.createElement("tr");
-    emptyRow.innerHTML = `<td colspan="4" style="text-align:center; color:gray;">🔍 無點名資料</td>`;
-    tableBody.appendChild(emptyRow);
+    showPlaceholder("🔍 此條件無點名資料");
     return;
   }
 
-  records.forEach((record) => {
+  const fragment = document.createDocumentFragment();
+  records.forEach(record => {
     const row = document.createElement("tr");
-    const formattedDate = new Date(record.date).toLocaleDateString("zh-TW");
-
-    const cells = [
-      formattedDate,
-      record.roomNumber || "N/A",
-      record.studentName,
-      record.status,
-    ];
-
-    cells.forEach((text) => {
-      const cell = document.createElement("td");
-      cell.textContent = text;
-      row.appendChild(cell);
+    const formattedDate = new Date(record.date + "T00:00:00").toLocaleDateString("zh-TW", {
+      month: "numeric", day: "numeric", weekday: "short",
     });
 
-    if (record.status === "未歸") row.classList.add("status-absent");
+    if (record.status === "未歸")     row.classList.add("status-absent");
     else if (record.status === "晚歸") row.classList.add("status-late");
 
-    tableBody.appendChild(row);
+    row.innerHTML = `
+      <td>${formattedDate}</td>
+      <td>${record.roomNumber || "—"}</td>
+      <td>${record.studentName}</td>
+      <td class="action-cell">
+        <select class="status-select" data-id="${record.student_id}" data-date="${record.date}">
+          <option value="在寢"  ${record.status === "在寢"  ? "selected" : ""}>在寢</option>
+          <option value="未歸"  ${record.status === "未歸"  ? "selected" : ""}>未歸</option>
+          <option value="晚歸"  ${record.status === "晚歸"  ? "selected" : ""}>晚歸</option>
+        </select>
+        <button class="btn-inline-save"   onclick="saveStatus(this)">儲存</button>
+        <button class="btn-inline-delete" onclick="deleteRecord('${record.student_id}', '${record.date}', this)">刪除</button>
+      </td>
+    `;
+    fragment.appendChild(row);
   });
+
+  tableBody.innerHTML = "";
+  tableBody.appendChild(fragment);
 }
 
-// **🆕 🔹 清除所有歷史紀錄 (新增功能)**
-function clearAllHistory() {
-  // 第一道防線
-  if (
-    !confirm(
-      "⚠️ 嚴重警告：\n\n這將會「永久刪除」資料庫中所有的點名紀錄！\n\n此操作無法復原，您確定要繼續嗎？"
-    )
-  ) {
-    return;
-  }
+// ── 渲染分頁控制列 ────────────────────────
+function renderPagination(page, tPages, total) {
+  const bar = document.getElementById("pagination-bar");
+  if (!tPages || tPages <= 1) { bar.classList.add("hidden"); return; }
 
-  // 第二道防線
-  if (!confirm("🚨 最後確認：\n\n真的要清空所有資料嗎？請謹慎操作。")) {
-    return;
-  }
+  bar.classList.remove("hidden");
+  const start = (page - 1) * PAGE_SIZE + 1;
+  const end   = Math.min(page * PAGE_SIZE, total);
+  document.getElementById("page-info").textContent =
+    `第 ${page} / ${tPages} 頁（顯示第 ${start}–${end} 筆，共 ${total} 筆）`;
+  document.getElementById("prev-btn").disabled = page <= 1;
+  document.getElementById("next-btn").disabled = page >= tPages;
+}
 
-  fetch("/api/attendance/clear", {
-    method: "DELETE",
+// ── 顯示空狀態訊息 ────────────────────────
+function showPlaceholder(msg) {
+  document.getElementById("history-data").innerHTML =
+    `<tr><td colspan="4" class="table-placeholder">${msg}</td></tr>`;
+}
+
+// ── 修改單筆狀態 ──────────────────────────
+function saveStatus(btn) {
+  const select     = btn.previousElementSibling;
+  const student_id = select.dataset.id;
+  const date       = select.dataset.date;
+  const status     = select.value;
+
+  fetch("/api/attendance/update", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ student_id, date, status }),
   })
-    .then((response) => response.json())
-    .then((data) => {
+    .then(res => res.json())
+    .then(data => {
       if (data.success) {
-        alert("✅ " + data.message);
-        // 清除後重新載入頁面，讓表格變空
-        window.location.reload();
+        const row = btn.closest("tr");
+        row.className = "";
+        if (status === "未歸")     row.classList.add("status-absent");
+        else if (status === "晚歸") row.classList.add("status-late");
       } else {
-        alert("❌ 清除失敗: " + data.message);
+        alert("❌ 更新失敗：" + data.error);
       }
     })
-    .catch((error) => {
-      console.error("清除請求錯誤:", error);
-      alert("❌ 無法連接伺服器");
-    });
+    .catch(() => alert("❌ 無法連線伺服器"));
 }
 
-// **🔹 匯出為 Excel**
+// ── 刪除單筆紀錄 ──────────────────────────
+function deleteRecord(student_id, date, btn) {
+  if (!confirm("確定要刪除此筆紀錄嗎？")) return;
+
+  fetch(`/api/attendance/delete?student_id=${encodeURIComponent(student_id)}&date=${encodeURIComponent(date)}`, {
+    method: "DELETE",
+  })
+    .then(res => res.json())
+    .then(data => {
+      if (data.success) btn.closest("tr").remove();
+      else alert("❌ 刪除失敗：" + data.error);
+    })
+    .catch(() => alert("❌ 無法連線伺服器"));
+}
+
+// ── 清空所有紀錄 ──────────────────────────
+function clearAllHistory() {
+  if (!confirm("⚠️ 嚴重警告：\n\n這將會「永久刪除」所有點名紀錄！\n\n此操作無法復原，確定要繼續嗎？")) return;
+  if (!confirm("🚨 最後確認：\n\n真的要清空所有資料嗎？")) return;
+
+  fetch("/api/attendance/clear", { method: "DELETE" })
+    .then(res => res.json())
+    .then(data => {
+      if (data.success) { alert("✅ " + data.message); window.location.reload(); }
+      else alert("❌ 清除失敗: " + data.message);
+    })
+    .catch(() => alert("❌ 無法連接伺服器"));
+}
+
+// ── 匯出 CSV（呼叫 API 取全部符合資料）──
+function exportToCSV() {
+  const date  = document.getElementById("date-select").value;
+  const group = document.getElementById("group-select").value;
+
+  const params = new URLSearchParams({ pageSize: 9999 });
+  if (date)  params.append("date",  date);
+  if (group) params.append("group", group);
+
+  fetch(`/api/attendance/history?${params}`)
+    .then(res => res.json())
+    .then(data => {
+      if (!data.success || data.data.length === 0) {
+        alert("⚠️ 無可匯出的歷史紀錄");
+        return;
+      }
+
+      let csv = "\uFEFF日期,房號,學生姓名,狀態\n";
+      data.data.forEach(r => {
+        const d = new Date(r.date + "T00:00:00").toLocaleDateString("zh-TW");
+        csv += `"${d}","${r.roomNumber || ""}","${r.studentName}","${r.status}"\n`;
+      });
+
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = date
+        ? `attendance_${date}${group ? "_" + group : ""}.csv`
+        : `attendance_all_${new Date().toLocaleDateString("sv-SE")}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    })
+    .catch(() => alert("❌ 匯出失敗，請稍後再試"));
+}
+
+// ── 匯出 Excel（後端產生）────────────────
 function exportToExcel() {
-  const date = document.getElementById("date-select").value;
+  const date  = document.getElementById("date-select").value;
   const group = document.getElementById("group-select").value;
 
   if (!date) {
-    alert("請選擇一個日期以匯出資料");
+    alert("請先選擇日期才能匯出 Excel");
     return;
   }
 
-  let exportUrl = `/api/attendance/export?date=${encodeURIComponent(date)}`;
-  if (group) exportUrl += `&group=${encodeURIComponent(group)}`;
-
-  // 檢查是否真的有 export API (需要你在 server.js 實作，否則會 404)
-  // 這裡假設後端還沒實作 Excel 匯出，暫時用 CSV 替代或提示
-  // window.location.href = exportUrl;
-  alert("Excel 匯出功能需後端支援，目前建議使用 CSV 匯出功能。");
-}
-
-// **🔹 匯出為 CSV**
-function exportToCSV() {
-  const table = document.getElementById("history-data");
-  if (
-    !table ||
-    table.rows.length === 0 ||
-    table.rows[0].innerText.includes("無點名資料")
-  ) {
-    alert("⚠️ 無可匯出的歷史紀錄");
-    return;
-  }
-
-  // 加入 BOM (\uFEFF) 讓 Excel 開啟時能正確識別 UTF-8 中文
-  let csvContent = "\uFEFF日期,房號,學生姓名,狀態\n";
-
-  for (let row of table.rows) {
-    let rowData = [];
-    for (let cell of row.cells) {
-      let text = cell.textContent.replace(/"/g, '""'); // 處理雙引號
-      rowData.push(`"${text}"`);
-    }
-    csvContent += rowData.join(",") + "\n";
-  }
-
-  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-  const link = document.createElement("a");
-  const url = URL.createObjectURL(blob);
-
-  link.setAttribute("href", url);
-  link.setAttribute(
-    "download",
-    `attendance_history_${new Date().toISOString().slice(0, 10)}.csv`
-  );
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+  let url = `/api/attendance/export?date=${encodeURIComponent(date)}`;
+  if (group) url += `&group=${encodeURIComponent(group)}`;
+  window.location.href = url;
 }

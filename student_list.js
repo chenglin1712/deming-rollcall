@@ -43,9 +43,19 @@ document.addEventListener("DOMContentLoaded", () => {
             "<tr><td colspan='4'>該群組無學生資料</td></tr>";
           return;
         }
+        const fragment = document.createDocumentFragment();
         students.forEach((student) => {
-          appendStudentRow(student); // 使用共用函式渲染
+          const phoneNumber = student.phoneNumber || "無資料";
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${student.id}</td>
+            <td>${student.name}</td>
+            <td>${student.roomNumber}</td>
+            <td>${phoneNumber}</td>
+          `;
+          fragment.appendChild(tr);
         });
+        studentTableBody.appendChild(fragment);
       })
       .catch((error) => {
         console.error("❌ 無法載入學生名單:", error);
@@ -84,21 +94,20 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // 🛠 輔助函式：將學生資料加入表格 (避免重複寫 code)
+  // 🛠 輔助函式：將學生資料加入表格
   function appendStudentRow(student) {
-    let phoneNumber = student.phoneNumber ? student.phoneNumber : "無資料";
-    let groupInfo = student.group_name
+    const phoneNumber = student.phoneNumber || "無資料";
+    const groupInfo = student.group_name
       ? `<br><small style='color: gray'>(${student.group_name})</small>`
       : "";
 
-    let row = `
-      <tr>
-        <td>${student.id}</td>
-        <td>${student.name}</td>
-        <td>${student.roomNumber} ${groupInfo}</td>
-        <td>${phoneNumber}</td> 
-      </tr>
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${student.id}</td>
+      <td>${student.name}</td>
+      <td>${student.roomNumber}${groupInfo}</td>
+      <td>${phoneNumber}</td>
     `;
-    studentTableBody.innerHTML += row;
+    studentTableBody.appendChild(tr);
   }
 });

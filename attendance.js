@@ -14,12 +14,27 @@ document.addEventListener("DOMContentLoaded", function () {
   document.getElementById("group-title").textContent = groupName;
 
   // 設定當前日期
-  const currentDate = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+  const dateParam = urlParams.get("date");
+  const currentDate = dateParam || new Date().toLocaleDateString("sv-SE"); // YYYY-MM-DD，使用本地時區
   document.getElementById("current-date").textContent = currentDate;
 
   loadStudents(groupName);
 
+  // 點名中，防止誤觸返回/關閉
+  window.addEventListener("beforeunload", (e) => {
+    e.preventDefault();
+    e.returnValue = "";
+  });
+
   document.getElementById("submit-btn").addEventListener("click", () => {
+    submitAttendance(groupName, currentDate);
+  });
+
+  document.getElementById("all-present-btn").addEventListener("click", () => {
+    if (!confirm("確定將所有學生標記為「在寢」並送出？")) return;
+    document.querySelectorAll('input[type="radio"][value="在寢"]').forEach((r) => {
+      r.checked = true;
+    });
     submitAttendance(groupName, currentDate);
   });
 });
@@ -98,6 +113,8 @@ function submitAttendance(groupName, date) {
     .then((response) => response.json())
     .then((data) => {
       if (data.success) {
+        window.removeEventListener("beforeunload", () => {});
+        window.onbeforeunload = null;
         alert("✅ 點名成功！");
         window.location.href = "index.html";
       } else {
@@ -110,49 +127,3 @@ function submitAttendance(groupName, date) {
     });
 }
 
-// **🔹 新增防止重複點名的點名提交按鈕事件**
-document.getElementById("submitAttendance").addEventListener("click", () => {
-  const date = document.getElementById("attendanceDate").value;
-  const group = document.getElementById("groupSelect").value;
-
-  if (!date || !group) {
-    alert("請選擇日期與群組！");
-    return;
-  }
-
-  const attendanceData = [];
-  document.querySelectorAll(".student-row").forEach((row) => {
-    const studentId = row.dataset.studentId;
-    const studentName = row.querySelector(".student-name").textContent;
-    const status = row.querySelector(
-      "input[name='status-" + studentId + "']:checked"
-    );
-
-    if (!status) {
-      alert("請標記所有學生的點名狀態！");
-      return;
-    }
-
-    attendanceData.push({
-      student_id: studentId,
-      studentName: studentName,
-      status: status.value,
-    });
-  });
-
-  fetch("/api/attendance/submit", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ date, group, attendanceData }),
-  })
-    .then((res) => res.json())
-    .then((data) => {
-      if (data.error) {
-        alert(`⚠️ 部分學生已點名: ${data.duplicated.join(", ")}`);
-      } else {
-        alert("✅ 點名成功！");
-        window.location.reload(); // 重新整理頁面
-      }
-    })
-    .catch((error) => console.error("❌ 點名提交錯誤:", error));
-});
