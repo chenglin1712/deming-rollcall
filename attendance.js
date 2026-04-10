@@ -110,15 +110,19 @@ function submitAttendance(groupName, date) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ date, group: groupName, attendanceData }),
   })
-    .then((response) => response.json())
+    .then((response) => {
+      if (!response.ok && response.status !== 409) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      return response.json();
+    })
     .then((data) => {
       if (data.success) {
-        window.removeEventListener("beforeunload", () => {});
         window.onbeforeunload = null;
         alert("✅ 點名成功！");
         window.location.href = "index.html";
       } else {
-        alert("❌ 點名失敗，請稍後重試！");
+        alert("❌ 點名失敗：" + (data.error || "請稍後重試"));
       }
     })
     .catch((error) => {

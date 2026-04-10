@@ -14,6 +14,9 @@ const stream = require("stream");
 const app = express();
 const port = process.env.PORT || 3000;
 const host = "0.0.0.0";
+const BCRYPT_ROUNDS = parseInt(process.env.BCRYPT_ROUNDS) || 10;
+const DB_PATH = process.env.TEST_DB || "./dormitory.db";
+const SESSION_DB_NAME = process.env.SESSION_DB_NAME || "sessions.db";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -34,11 +37,9 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.static(__dirname));
-
 app.use(
   session({
-    store: new SQLiteStore({ db: "sessions.db", dir: "./", ttl: 86400 }),
+    store: new SQLiteStore({ db: SESSION_DB_NAME, dir: "./", ttl: 86400 }),
     secret: process.env.SESSION_SECRET || "fallback-secret-please-set-env",
     resave: false,
     saveUninitialized: false,
@@ -46,7 +47,7 @@ app.use(
   })
 );
 
-const db = new sqlite3.Database("./dormitory.db", (err) => {
+const db = new sqlite3.Database(DB_PATH, (err) => {
   if (err) console.error("❌ 無法連接到資料庫:", err.message);
   else console.log("✅ 已連接到 SQLite 資料庫");
 });
@@ -58,7 +59,7 @@ const users = [
 ];
 
 users.forEach((user) => {
-  bcrypt.hash(user.password, 10, (err, hash) => {
+  bcrypt.hash(user.password, BCRYPT_ROUNDS, (err, hash) => {
     if (!err) {
       db.run(
         `INSERT OR REPLACE INTO users (username, password, display_name) VALUES (?, ?, ?)`,
@@ -94,6 +95,9 @@ protectedPages.forEach((page) => {
     res.sendFile(path.join(__dirname, page))
   );
 });
+
+// 靜態檔案放在 protected routes 之後，確保受保護頁面需要驗證
+app.use(express.static(__dirname));
 
 // ================= API 區域 =================
 
@@ -259,7 +263,7 @@ app.post("/api/attendance/submit", requireLogin, (req, res) => {
         );
 
         if (newAttendance.length === 0)
-          return res.status(409).json({ error: "所有學生均已點名" });
+          return res.json({ success: true, message: "所有學生均已點名" });
 
         const newIds = newAttendance.map((s) => s.student_id);
         const newPlaceholders = newIds.map(() => "?").join(",");
@@ -436,21 +440,12 @@ app.post(
 
       db.serialize(() => {
         db.run("BEGIN TRANSACTION");
+        db.run("DELETE FROM students"); // 清除所有舊資料，確保完整替換
         const stmt = db.prepare(
-          `INSERT OR REPLACE INTO students (id, name, roomNumber, phoneNumber, group_name) VALUES (?, ?, ?, ?, ?)`
+          `INSERT INTO students (id, name, roomNumber, phoneNumber, group_name) VALUES (?, ?, ?, ?, ?)`
         );
-        let count = 0;
         students.forEach((s) => {
-          stmt.run(
-            s.id,
-            s.name,
-            s.roomNumber,
-            s.phoneNumber,
-            s.group_name,
-            (err) => {
-              if (!err) count++;
-            }
-          );
+          stmt.run(s.id, s.name, s.roomNumber, s.phoneNumber, s.group_name);
         });
         stmt.finalize();
         db.run("COMMIT", (err) => {
@@ -458,10 +453,10 @@ app.post(
             return res
               .status(500)
               .json({ success: false, message: "資料庫寫入失敗" });
-          console.log(`✅ 成功匯入 ${count} 筆資料`);
+          console.log(`✅ 成功匯入 ${students.length} 筆資料（已取代舊名冊）`);
           res.json({
             success: true,
-            message: `成功匯入 ${count} 筆學生資料！`,
+            message: `成功匯入 ${students.length} 筆學生資料，舊名冊已完整取代！`,
           });
         });
       });
@@ -613,7 +608,7 @@ app.post("/api/change-password", requireLogin, (req, res) => {
     bcrypt.compare(oldPassword, user.password, (err, match) => {
       if (!match) return res.status(401).json({ success: false, message: "舊密碼錯誤" });
 
-      bcrypt.hash(newPassword, 10, (err, hash) => {
+      bcrypt.hash(newPassword, BCRYPT_ROUNDS, (err, hash) => {
         if (err) return res.status(500).json({ success: false, message: "加密失敗" });
 
         db.run("UPDATE users SET password = ? WHERE username = ?", [hash, username], (err) => {
@@ -638,6 +633,10 @@ app.get("/", (req, res) =>
   res.redirect(req.session.user ? "/index.html" : "/login.html")
 );
 
-app.listen(port, host, () =>
-  console.log(`🚀 伺服器運行於 http://${host}:${port}`)
-);
+if (require.main === module) {
+  app.listen(port, host, () =>
+    console.log(`🚀 伺服器運行於 http://${host}:${port}`)
+  );
+}
+
+module.exports = { app, db };
