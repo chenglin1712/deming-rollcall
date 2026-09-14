@@ -74,6 +74,7 @@ const protectedPages = [
   "history.html",
   "student_list.html",
   "change_password.html",
+  "stats.html",
 ];
 
 const requireLogin = (req, res, next) => {
@@ -619,6 +620,103 @@ app.post("/api/change-password", requireLogin, (req, res) => {
     });
   });
 });
+
+// ================= 統計 API =================
+
+// 今日各組點名完成狀況
+app.get("/api/attendance/today-summary", requireLogin, (req, res) => {
+  const today = new Date().toLocaleDateString("sv-SE");
+  db.all(
+    `SELECT
+       TRIM(s.group_name) AS group_name,
+       COUNT(DISTINCT s.id) AS total_students,
+       COUNT(DISTINCT a.student_id) AS marked_count
+     FROM students s
+     LEFT JOIN attendance a ON s.id = a.student_id AND a.date = ?
+     WHERE s.group_name IS NOT NULL
+     GROUP BY TRIM(s.group_name)
+     ORDER BY s.group_name ASC`,
+    [today],
+    (err, rows) => {
+      if (err) return res.status(500).json({ success: false, message: "查詢失敗" });
+      const data = (rows || []).map(r => ({
+        group_name: r.group_name,
+        total_students: r.total_students,
+        marked_count: r.marked_count,
+        completed: r.marked_count >= r.total_students && r.total_students > 0,
+      }));
+      res.json({ success: true, data });
+    }
+  );
+});
+
+// 統計概覽（今日/本月數字）
+app.get("/api/stats/overview", requireLogin, (req, res) => {
+  const today = new Date().toLocaleDateString("sv-SE");
+  const monthPrefix = today.slice(0, 7); // e.g. "2025-09"
+
+  const todayQuery = `SELECT status, COUNT(*) as count FROM attendance WHERE date = ? GROUP BY status`;
+  const monthQuery = `SELECT status, COUNT(*) as count FROM attendance WHERE date LIKE ? GROUP BY status`;
+
+  db.all(todayQuery, [today], (err, todayRows) => {
+    if (err) return res.status(500).json({ success: false, message: "查詢失敗" });
+    db.all(monthQuery, [monthPrefix + "%"], (err, monthRows) => {
+      if (err) return res.status(500).json({ success: false, message: "查詢失敗" });
+
+      const toMap = rows => {
+        const m = { 在寢: 0, 未歸: 0, 晚歸: 0 };
+        (rows || []).forEach(r => { if (r.status in m) m[r.status] = r.count; });
+        return m;
+      };
+
+      res.json({
+        success: true,
+        today: toMap(todayRows),
+        month: toMap(monthRows),
+      });
+    });
+  });
+});
+
+// 最近 N 天出缺勤趨勢
+app.get("/api/stats/trends", requireLogin, (req, res) => {
+  const days = Math.min(90, Math.max(7, parseInt(req.query.days) || 30));
+  db.all(
+    `SELECT date, status, COUNT(*) as count
+     FROM attendance
+     WHERE date >= date('now', ?)
+     GROUP BY date, status
+     ORDER BY date ASC`,
+    [`-${days} days`],
+    (err, rows) => {
+      if (err) return res.status(500).json({ success: false, message: "查詢失敗" });
+      res.json({ success: true, data: rows || [] });
+    }
+  );
+});
+
+// 近 N 天未歸排行（Top 學生）
+app.get("/api/stats/absentees", requireLogin, (req, res) => {
+  const days = Math.min(90, Math.max(7, parseInt(req.query.days) || 30));
+  const limit = Math.min(50, Math.max(5, parseInt(req.query.limit) || 10));
+  db.all(
+    `SELECT a.student_id, a.studentName, s.roomNumber, s.group_name,
+            COUNT(*) AS absent_count
+     FROM attendance a
+     LEFT JOIN students s ON a.student_id = s.id
+     WHERE a.status = '未歸' AND a.date >= date('now', ?)
+     GROUP BY a.student_id
+     ORDER BY absent_count DESC
+     LIMIT ?`,
+    [`-${days} days`, limit],
+    (err, rows) => {
+      if (err) return res.status(500).json({ success: false, message: "查詢失敗" });
+      res.json({ success: true, data: rows || [] });
+    }
+  );
+});
+
+// ============================================
 
 // 9. 登出
 app.post("/api/logout", (req, res) => {

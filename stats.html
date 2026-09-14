@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>統計報表 — 宿舍點名系統</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  </head>
+  <body>
+    <div class="container">
+
+      <div class="stats-header">
+        <h1>📊 統計報表</h1>
+        <a href="index.html" class="btn secondary" style="text-decoration:none;">← 返回首頁</a>
+      </div>
+
+      <!-- 概覽卡片 -->
+      <div class="overview-grid">
+        <div class="overview-card blue">
+          <div class="card-label">今日點名完成</div>
+          <div class="card-value" id="ov-today-groups">—</div>
+          <div class="card-sub">組別完成 / 總組別數</div>
+        </div>
+        <div class="overview-card red">
+          <div class="card-label">今日未歸</div>
+          <div class="card-value" id="ov-today-absent">—</div>
+          <div class="card-sub">人次</div>
+        </div>
+        <div class="overview-card orange">
+          <div class="card-label">本月未歸</div>
+          <div class="card-value" id="ov-month-absent">—</div>
+          <div class="card-sub">人次累計</div>
+        </div>
+        <div class="overview-card green">
+          <div class="card-label">本月晚歸</div>
+          <div class="card-value" id="ov-month-late">—</div>
+          <div class="card-sub">人次累計</div>
+        </div>
+      </div>
+
+      <!-- 趨勢折線圖 -->
+      <div class="chart-section">
+        <h2>最近 30 天出缺勤趨勢</h2>
+        <div class="chart-wrapper">
+          <canvas id="trends-chart"></canvas>
+        </div>
+      </div>
+
+      <!-- 排行榜 + 各組完成率 -->
+      <div class="stats-bottom-grid">
+
+        <!-- 未歸排行榜 -->
+        <div class="chart-section" style="margin-bottom:0;">
+          <h2>未歸排行榜（近 30 天 Top 10）</h2>
+          <div id="absentee-container">
+            <p style="color:var(--text-secondary);font-size:0.9rem;">載入中...</p>
+          </div>
+        </div>
+
+        <!-- 各組今日點名完成率 -->
+        <div class="chart-section" style="margin-bottom:0;">
+          <h2>今日各組點名完成率</h2>
+          <div class="chart-wrapper">
+            <canvas id="groups-chart"></canvas>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+    <script>
+      // ── 登入驗證 ──────────────────────────────────
+      fetch("/api/check-login")
+        .then(r => r.json())
+        .then(data => {
+          if (!data.loggedIn) { window.location.href = "login.html"; return; }
+          if (data.user.username === "deming") { window.location.href = "index.html"; return; }
+          initStats();
+        })
+        .catch(() => { window.location.href = "login.html"; });
+
+      // ── 初始化所有資料 ────────────────────────────
+      function initStats() {
+        Promise.all([
+          fetch("/api/stats/overview").then(r => r.json()),
+          fetch("/api/stats/trends?days=30").then(r => r.json()),
+          fetch("/api/stats/absentees?days=30&limit=10").then(r => r.json()),
+          fetch("/api/attendance/today-summary").then(r => r.json()),
+        ]).then(([overview, trends, absentees, todaySummary]) => {
+          renderOverview(overview, todaySummary);
+          renderTrendsChart(trends);
+          renderAbsentees(absentees);
+          renderGroupsChart(todaySummary);
+        }).catch(err => {
+          console.error("資料載入失敗", err);
+        });
+      }
+
+      // ── 概覽卡片 ──────────────────────────────────
+      function renderOverview(ov, todaySummary) {
+        if (ov.success) {
+          document.getElementById("ov-today-absent").textContent = ov.today["未歸"] ?? 0;
+          document.getElementById("ov-month-absent").textContent = ov.month["未歸"] ?? 0;
+          document.getElementById("ov-month-late").textContent = ov.month["晚歸"] ?? 0;
+        }
+        if (todaySummary.success) {
+          const completed = todaySummary.data.filter(g => g.completed).length;
+          const total = todaySummary.data.length;
+          document.getElementById("ov-today-groups").textContent = `${completed} / ${total}`;
+        }
+      }
+
+      // ── 趨勢折線圖 ────────────────────────────────
+      function renderTrendsChart(data) {
+        if (!data.success || data.data.length === 0) {
+          document.querySelector("#trends-chart").closest(".chart-wrapper").innerHTML =
+            '<p style="color:var(--text-secondary);font-size:0.9rem;padding:20px 0;">尚無足夠資料顯示趨勢</p>';
+          return;
+        }
+
+        // 整理資料：以日期為 key，各狀態為 value
+        const dateSet = new Set();
+        const byDate = {};
+        data.data.forEach(r => {
+          dateSet.add(r.date);
+          if (!byDate[r.date]) byDate[r.date] = { 在寢: 0, 未歸: 0, 晚歸: 0 };
+          byDate[r.date][r.status] = r.count;
+        });
+        const labels = Array.from(dateSet).sort();
+
+        new Chart(document.getElementById("trends-chart"), {
+          type: "line",
+          data: {
+            labels: labels.map(d => d.slice(5)), // MM-DD
+            datasets: [
+              {
+                label: "未歸",
+                data: labels.map(d => byDate[d]?.["未歸"] ?? 0),
+                borderColor: "#FF3B30",
+                backgroundColor: "rgba(255,59,48,.08)",
+                borderWidth: 2,
+                pointRadius: 3,
+                tension: 0.3,
+                fill: true,
+              },
+              {
+                label: "晚歸",
+                data: labels.map(d => byDate[d]?.["晚歸"] ?? 0),
+                borderColor: "#FF9500",
+                backgroundColor: "rgba(255,149,0,.08)",
+                borderWidth: 2,
+                pointRadius: 3,
+                tension: 0.3,
+                fill: true,
+              },
+              {
+                label: "在寢",
+                data: labels.map(d => byDate[d]?.["在寢"] ?? 0),
+                borderColor: "#007AFF",
+                backgroundColor: "rgba(0,122,255,.06)",
+                borderWidth: 2,
+                pointRadius: 3,
+                tension: 0.3,
+                fill: true,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { position: "top", labels: { boxWidth: 14, font: { size: 12 } } },
+              tooltip: { mode: "index", intersect: false },
+            },
+            scales: {
+              x: {
+                grid: { color: "rgba(0,0,0,.04)" },
+                ticks: { font: { size: 11 }, maxTicksLimit: 10 },
+              },
+              y: {
+                beginAtZero: true,
+                grid: { color: "rgba(0,0,0,.04)" },
+                ticks: { font: { size: 11 }, precision: 0 },
+              },
+            },
+          },
+        });
+      }
+
+      // ── 未歸排行榜 ────────────────────────────────
+      function renderAbsentees(data) {
+        const container = document.getElementById("absentee-container");
+        if (!data.success || data.data.length === 0) {
+          container.innerHTML = '<p style="color:var(--text-secondary);font-size:0.9rem;">近 30 天無未歸紀錄</p>';
+          return;
+        }
+        container.innerHTML = `
+          <table class="absentee-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>姓名</th>
+                <th>房號</th>
+                <th>未歸次數</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${data.data.map((s, i) => `
+                <tr>
+                  <td style="color:var(--text-tertiary);">${i + 1}</td>
+                  <td>${s.studentName}</td>
+                  <td style="color:var(--text-secondary);">${s.roomNumber || "—"}</td>
+                  <td><span class="absentee-badge">${s.absent_count}</span></td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        `;
+      }
+
+      // ── 各組完成率長條圖 ──────────────────────────
+      function renderGroupsChart(data) {
+        if (!data.success || data.data.length === 0) {
+          document.querySelector("#groups-chart").closest(".chart-wrapper").innerHTML =
+            '<p style="color:var(--text-secondary);font-size:0.9rem;padding:20px 0;">尚無學生資料</p>';
+          return;
+        }
+
+        const labels = data.data.map(g => g.group_name.replace("德明宿舍", ""));
+        const values = data.data.map(g =>
+          g.total_students > 0 ? Math.round(g.marked_count / g.total_students * 100) : 0
+        );
+        const colors = data.data.map(g => g.completed ? "rgba(52,199,89,.7)" : "rgba(255,149,0,.7)");
+        const borders = data.data.map(g => g.completed ? "#34C759" : "#FF9500");
+
+        new Chart(document.getElementById("groups-chart"), {
+          type: "bar",
+          data: {
+            labels,
+            datasets: [{
+              label: "完成率 (%)",
+              data: values,
+              backgroundColor: colors,
+              borderColor: borders,
+              borderWidth: 1.5,
+              borderRadius: 6,
+            }],
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  label: ctx => {
+                    const g = data.data[ctx.dataIndex];
+                    return ` ${ctx.parsed.y}%（${g.marked_count}/${g.total_students} 人）`;
+                  },
+                },
+              },
+            },
+            scales: {
+              x: {
+                grid: { display: false },
+                ticks: { font: { size: 10 }, maxRotation: 35 },
+              },
+              y: {
+                beginAtZero: true,
+                max: 100,
+                grid: { color: "rgba(0,0,0,.04)" },
+                ticks: {
+                  font: { size: 11 },
+                  callback: v => v + "%",
+                },
+              },
+            },
+          },
+        });
+      }
+    </script>
+  </body>
+</html>

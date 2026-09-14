@@ -18,12 +18,40 @@
 
       <main>
         <div id="admin-dashboard" class="hidden">
-          <div class="admin-header-widget">
+
+          <!-- 頂部導覽列 -->
+          <nav class="admin-topnav">
+            <span class="topnav-brand">🏠 德明宿舍管理系統</span>
+            <div class="topnav-right">
+              <span class="topnav-username" id="topnav-username"></span>
+              <button id="admin-logout-btn" class="btn sm secondary">登出</button>
+            </div>
+          </nav>
+
+          <!-- 問候區 -->
+          <div class="admin-greeting">
             <h2 id="admin-welcome">Good Morning.</h2>
-            <p id="system-time">--月--日</p>
+            <p id="system-time" class="greeting-date">--月--日</p>
           </div>
 
-          <div class="search-wrapper">
+          <!-- 快速數字列 -->
+          <div class="admin-stat-row" id="admin-stat-row">
+            <div class="admin-stat-chip blue">
+              <span class="asc-value" id="asc-groups">—</span>
+              <span class="asc-label">今日完成組數</span>
+            </div>
+            <div class="admin-stat-chip red">
+              <span class="asc-value" id="asc-absent">—</span>
+              <span class="asc-label">今日未歸</span>
+            </div>
+            <div class="admin-stat-chip orange">
+              <span class="asc-value" id="asc-late">—</span>
+              <span class="asc-label">今日晚歸</span>
+            </div>
+          </div>
+
+          <!-- 搜尋列 -->
+          <div class="search-wrapper admin-search">
             <span class="search-icon-placeholder">🔍</span>
             <input
               type="text"
@@ -34,55 +62,53 @@
             />
           </div>
 
-          <div class="grid-menu">
-            <div
-              class="menu-item action-primary"
-              onclick="startAdminAttendance()"
-            >
-              <div class="icon-box">📝</div>
-              <span>開始點名</span>
-              <p class="desc">進入樓層列表</p>
+          <!-- 快速操作區 -->
+          <section class="qa-section">
+            <button class="qa-primary-btn" onclick="startAdminAttendance()">
+              <span class="qa-primary-icon">📝</span>
+              <span class="qa-primary-label">開始點名</span>
+              <span class="qa-primary-sub">進入樓層選擇</span>
+              <span class="qa-primary-arrow">→</span>
+            </button>
+
+            <div class="qa-grid">
+              <button class="qa-cell" onclick="location.href='history.html'">
+                <span class="qa-cell-icon" style="background:var(--blue-light);">📅</span>
+                <span class="qa-cell-label">歷史紀錄</span>
+              </button>
+              <button class="qa-cell" onclick="location.href='stats.html'">
+                <span class="qa-cell-icon" style="background:var(--purple-light);">📊</span>
+                <span class="qa-cell-label">統計報表</span>
+              </button>
+              <button class="qa-cell" onclick="location.href='student_list.html'">
+                <span class="qa-cell-icon" style="background:var(--green-light);">👥</span>
+                <span class="qa-cell-label">學生名單</span>
+              </button>
+              <button class="qa-cell" onclick="location.href='add_student.html'">
+                <span class="qa-cell-icon" style="background:var(--orange-light);">📥</span>
+                <span class="qa-cell-label">匯入資料</span>
+              </button>
+              <button class="qa-cell" onclick="location.href='change_password.html'">
+                <span class="qa-cell-icon" style="background:var(--bg-2);">🔑</span>
+                <span class="qa-cell-label">修改密碼</span>
+              </button>
+              <button class="qa-cell danger" onclick="confirmClear()">
+                <span class="qa-cell-icon" style="background:var(--red-light);">🗑️</span>
+                <span class="qa-cell-label">清空紀錄</span>
+              </button>
             </div>
-            <div
-              class="menu-item history"
-              onclick="location.href='history.html'"
-            >
-              <div class="icon-box">📅</div>
-              <span>歷史紀錄</span>
+          </section>
+
+          <!-- 今日點名狀況 -->
+          <section class="today-status-section">
+            <div class="today-status-header">
+              <h2 class="today-status-title">今日點名狀況</h2>
+              <a href="stats.html" class="today-status-link">查看統計 →</a>
             </div>
-            <div
-              class="menu-item students"
-              onclick="location.href='student_list.html'"
-            >
-              <div class="icon-box">👥</div>
-              <span>學生名單</span>
+            <div id="today-status-list" class="today-status-list">
+              <p style="color: var(--text-secondary); font-size: 0.9rem;">載入中...</p>
             </div>
-            <div
-              class="menu-item import"
-              onclick="location.href='add_student.html'"
-            >
-              <div class="icon-box">📥</div>
-              <span>匯入資料</span>
-            </div>
-            <div class="menu-item danger" onclick="confirmClear()">
-              <div class="icon-box">🗑️</div>
-              <span>清空紀錄</span>
-            </div>
-            <div
-              class="menu-item"
-              onclick="location.href='change_password.html'"
-            >
-              <div class="icon-box">🔑</div>
-              <span>修改密碼</span>
-            </div>
-            <div
-              class="menu-item logout"
-              onclick="document.getElementById('logout-btn-header').click()"
-            >
-              <div class="icon-box">🔒</div>
-              <span>登出系統</span>
-            </div>
-          </div>
+          </section>
         </div>
 
         <div id="dorm-leader-view">
@@ -208,12 +234,14 @@
               if (hour >= 11) greeting = "午安";
               if (hour >= 18) greeting = "晚安";
               document.getElementById("admin-welcome").textContent = `${greeting}，${displayName}。`;
+              document.getElementById("topnav-username").textContent = displayName;
               updateTime();
               toggleView("admin");
+              loadTodaySummary();
             }
           });
 
-        document.getElementById("logout-btn-header").addEventListener("click", function () {
+        function doLogout() {
           fetch("/api/logout", { method: "POST" })
             .then((res) => res.json())
             .then((data) => {
@@ -222,7 +250,9 @@
                 window.location.href = "login.html";
               }
             });
-        });
+        }
+        document.getElementById("logout-btn-header").addEventListener("click", doLogout);
+        document.getElementById("admin-logout-btn").addEventListener("click", doLogout);
 
         const searchInput = document.getElementById("student-search-input");
         searchInput.addEventListener("keypress", function (event) {
@@ -461,6 +491,61 @@
           document.getElementById("search-modal").classList.remove("active");
           document.getElementById("student-search-input").value = ""; // 搜尋完清空
         }
+      }
+
+      // ── 今日點名狀況 + 快速數字列 ──────────────────
+      function loadTodaySummary() {
+        Promise.all([
+          fetch("/api/attendance/today-summary").then(r => r.json()),
+          fetch("/api/stats/overview").then(r => r.json()),
+        ]).then(([summaryRes, overviewRes]) => {
+          // 填入快速數字列
+          if (summaryRes.success) {
+            const completedCount = summaryRes.data.filter(g => g.completed).length;
+            const total = summaryRes.data.length;
+            document.getElementById("asc-groups").textContent = `${completedCount}/${total}`;
+          }
+          if (overviewRes.success) {
+            document.getElementById("asc-absent").textContent = overviewRes.today["未歸"] ?? 0;
+            document.getElementById("asc-late").textContent = overviewRes.today["晚歸"] ?? 0;
+          }
+
+          // 填入今日點名狀況列表
+          const container = document.getElementById("today-status-list");
+          if (!summaryRes.success || summaryRes.data.length === 0) {
+            container.innerHTML = '<p style="color:var(--text-secondary);font-size:0.9rem;">目前尚無學生資料</p>';
+            return;
+          }
+          const completedCount = summaryRes.data.filter(g => g.completed).length;
+          const total = summaryRes.data.length;
+          const allDone = completedCount === total;
+
+          container.innerHTML = `
+            <div class="today-summary-bar">
+              <span class="today-summary-count ${allDone ? 'all-done' : ''}">
+                ${allDone ? '✅' : '📋'} 今日已完成 ${completedCount} / ${total} 組
+              </span>
+            </div>
+            ${summaryRes.data.map(g => {
+              const pct = g.total_students > 0 ? Math.round(g.marked_count / g.total_students * 100) : 0;
+              const isDone = g.completed;
+              return `
+                <div class="today-group-row ${isDone ? 'done' : 'pending'}"
+                     ${!isDone ? `onclick="location.href='attendance.html?group=${encodeURIComponent(g.group_name)}'" style="cursor:pointer;"` : ''}>
+                  <span class="today-group-icon">${isDone ? '✅' : '⚠️'}</span>
+                  <span class="today-group-name">${g.group_name}</span>
+                  <span class="today-group-count">${g.marked_count} / ${g.total_students} 人</span>
+                  <div class="today-group-bar">
+                    <div class="today-group-fill" style="width:${pct}%; background:${isDone ? 'var(--green)' : 'var(--orange)'}"></div>
+                  </div>
+                  ${!isDone ? '<span class="today-group-action">前往點名 →</span>' : ''}
+                </div>`;
+            }).join('')}
+          `;
+        }).catch(() => {
+          document.getElementById("today-status-list").innerHTML =
+            '<p style="color:var(--red);font-size:0.9rem;">無法載入今日狀況</p>';
+        });
       }
     </script>
   </body>
