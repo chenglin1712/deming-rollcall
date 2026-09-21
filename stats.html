@@ -70,6 +70,7 @@
 
     </div>
 
+    <script src="util.js"></script>
     <script>
       // ── 登入驗證 ──────────────────────────────────
       fetch("/api/check-login")
@@ -210,9 +211,9 @@
               ${data.data.map((s, i) => `
                 <tr>
                   <td style="color:var(--text-tertiary);">${i + 1}</td>
-                  <td>${s.studentName}</td>
-                  <td style="color:var(--text-secondary);">${s.roomNumber || "—"}</td>
-                  <td><span class="absentee-badge">${s.absent_count}</span></td>
+                  <td>${escapeHtml(s.studentName)}</td>
+                  <td style="color:var(--text-secondary);">${escapeHtml(s.roomNumber || "—")}</td>
+                  <td><span class="absentee-badge">${escapeHtml(s.absent_count)}</span></td>
                 </tr>
               `).join("")}
             </tbody>

@@ -207,6 +207,7 @@
       </div>
     </div>
 
+    <script src="util.js"></script>
     <script>
       let selectedDate = null; // null = 今日；字串 = 補點名日期
       let isDeming = false;
@@ -263,8 +264,13 @@
         });
 
         // 補點名日期：限制最多到今天
-        const today = new Date().toLocaleDateString("sv-SE");
-        document.getElementById("makeup-date-input").max = today;
+        // 先以裝置日期暫代，再以伺服器認定的今天為準（避免裝置時間不準）
+        const makeupInput = document.getElementById("makeup-date-input");
+        makeupInput.max = new Date().toLocaleDateString("sv-SE");
+        fetch("/api/server-date")
+          .then((r) => (r.ok ? r.json() : Promise.reject()))
+          .then((d) => { if (d && d.date) makeupInput.max = d.date; })
+          .catch(() => {});
       });
 
       // ── 畫面切換 ──────────────────────────────────
@@ -486,7 +492,7 @@
             statusClass = "absent";
           else statusClass = "late";
 
-          statusHtml = `<span class="status-badge ${statusClass}">${student.today_status}</span>`;
+          statusHtml = `<span class="status-badge ${statusClass}">${escapeHtml(student.today_status)}</span>`;
         }
         statusContainer.innerHTML = statusHtml;
 
@@ -503,8 +509,8 @@
             historyList.innerHTML = h.data.map((r) => {
               const color = r.status === "未歸" ? "#e74c3c" : r.status === "晚歸" ? "#e67e22" : "#27ae60";
               return `<div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid #f0f0f0;">
-                <span>${r.date}</span>
-                <span style="color:${color}; font-weight:bold;">${r.status}</span>
+                <span>${escapeHtml(r.date)}</span>
+                <span style="color:${color}; font-weight:bold;">${escapeHtml(r.status)}</span>
               </div>`;
             }).join("");
           })
@@ -560,9 +566,9 @@
               const isDone = g.completed;
               return `
                 <div class="today-group-row ${isDone ? 'done' : 'pending'}"
-                     ${!isDone ? `onclick="location.href='attendance.html?group=${encodeURIComponent(g.group_name)}'" style="cursor:pointer;"` : ''}>
+                     ${!isDone ? `data-group="${escapeHtml(g.group_name)}" style="cursor:pointer;"` : ''}>
                   <span class="today-group-icon">${isDone ? '✅' : '⚠️'}</span>
-                  <span class="today-group-name">${g.group_name}</span>
+                  <span class="today-group-name">${escapeHtml(g.group_name)}</span>
                   <span class="today-group-count">${g.marked_count} / ${g.total_students} 人</span>
                   <div class="today-group-bar">
                     <div class="today-group-fill" style="width:${pct}%; background:${isDone ? 'var(--green)' : 'var(--orange)'}"></div>
@@ -571,6 +577,11 @@
                 </div>`;
             }).join('')}
           `;
+          container.querySelectorAll(".today-group-row[data-group]").forEach((el) => {
+            el.addEventListener("click", () => {
+              location.href = `attendance.html?group=${encodeURIComponent(el.dataset.group)}`;
+            });
+          });
         }).catch(() => {
           document.getElementById("today-status-list").innerHTML =
             '<p style="color:var(--red);font-size:0.9rem;">無法載入今日狀況</p>';

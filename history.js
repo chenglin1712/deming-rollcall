@@ -141,19 +141,21 @@ function renderTable(records) {
     else if (record.status === "晚歸") row.classList.add("status-late");
 
     row.innerHTML = `
-      <td>${formattedDate}</td>
-      <td>${record.roomNumber || "—"}</td>
-      <td>${record.studentName}</td>
+      <td>${escapeHtml(formattedDate)}</td>
+      <td>${escapeHtml(record.roomNumber || "—")}</td>
+      <td>${escapeHtml(record.studentName)}</td>
       <td class="action-cell">
-        <select class="status-select" data-id="${record.student_id}" data-date="${record.date}">
+        <select class="status-select" data-id="${escapeHtml(record.student_id)}" data-date="${escapeHtml(record.date)}">
           <option value="在寢"  ${record.status === "在寢"  ? "selected" : ""}>在寢</option>
           <option value="未歸"  ${record.status === "未歸"  ? "selected" : ""}>未歸</option>
           <option value="晚歸"  ${record.status === "晚歸"  ? "selected" : ""}>晚歸</option>
         </select>
         <button class="btn-inline-save"   onclick="saveStatus(this)">儲存</button>
-        <button class="btn-inline-delete" onclick="deleteRecord('${record.student_id}', '${record.date}', this)">刪除</button>
+        <button class="btn-inline-delete">刪除</button>
       </td>
     `;
+    const deleteBtn = row.querySelector(".btn-inline-delete");
+    deleteBtn.addEventListener("click", () => deleteRecord(record.student_id, record.date, deleteBtn));
     fragment.appendChild(row);
   });
 
@@ -236,53 +238,44 @@ function clearAllHistory() {
     .catch(() => alert("❌ 無法連接伺服器"));
 }
 
-// ── 匯出 CSV（呼叫 API 取全部符合資料）──
-function exportToCSV() {
-  const date  = document.getElementById("date-select").value;
-  const group = document.getElementById("group-select").value;
+// ── 匯出（CSV / Excel）──────────────────
+// 一律匯出「全部資料」（所有日期、所有群組），不受畫面上的日期／群組篩選
+// 與每頁 50 筆的分頁限制影響；由伺服器一次產生完整檔案。
+function exportRecords(format) {
+  const params = new URLSearchParams({ format });
 
-  const params = new URLSearchParams({ pageSize: 9999 });
-  if (date)  params.append("date",  date);
-  if (group) params.append("group", group);
+  const buttons = [document.getElementById("export-excel-btn"), document.getElementById("export-csv-btn")];
+  buttons.forEach(b => { b.disabled = true; });
 
-  fetch(`/api/attendance/history?${params}`)
-    .then(res => res.json())
-    .then(data => {
-      if (!data.success || data.data.length === 0) {
-        alert("⚠️ 無可匯出的歷史紀錄");
-        return;
+  fetch(`/api/attendance/export?${params}`)
+    .then(res => {
+      if (!res.ok) {
+        return res.json().catch(() => ({})).then(d => {
+          throw new Error(d.error || d.message || `HTTP ${res.status}`);
+        });
       }
-
-      let csv = "\uFEFF日期,房號,學生姓名,狀態\n";
-      data.data.forEach(r => {
-        const d = new Date(r.date + "T00:00:00").toLocaleDateString("zh-TW");
-        csv += `"${d}","${r.roomNumber || ""}","${r.studentName}","${r.status}"\n`;
-      });
-
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+      const disposition = res.headers.get("Content-Disposition") || "";
+      const utf8Name = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+      const plainName = disposition.match(/filename="([^"]+)"/i);
+      let filename = plainName ? plainName[1] : `attendance.${format}`;
+      if (utf8Name) {
+        try { filename = decodeURIComponent(utf8Name[1]); } catch (_) { /* 解碼失敗就沿用 ASCII 檔名 */ }
+      }
+      return res.blob().then(blob => ({ blob, filename }));
+    })
+    .then(({ blob, filename }) => {
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
-      link.download = date
-        ? `attendance_${date}${group ? "_" + group : ""}.csv`
-        : `attendance_all_${new Date().toLocaleDateString("sv-SE")}.csv`;
+      link.download = filename;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
     })
-    .catch(() => alert("❌ 匯出失敗，請稍後再試"));
+    .catch(err => alert("❌ 匯出失敗：" + err.message))
+    .finally(() => buttons.forEach(b => { b.disabled = false; }));
 }
 
-// ── 匯出 Excel（後端產生）────────────────
-function exportToExcel() {
-  const date  = document.getElementById("date-select").value;
-  const group = document.getElementById("group-select").value;
+function exportToCSV()   { exportRecords("csv"); }
+function exportToExcel() { exportRecords("xlsx"); }
 
-  if (!date) {
-    alert("請先選擇日期才能匯出 Excel");
-    return;
-  }
-
-  let url = `/api/attendance/export?date=${encodeURIComponent(date)}`;
-  if (group) url += `&group=${encodeURIComponent(group)}`;
-  window.location.href = url;
-}

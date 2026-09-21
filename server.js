@@ -91,8 +91,27 @@ ensureAttendanceSchema().catch((err) => {
     console.warn("⚠️ 點名資料表遷移失敗（可能已有重複紀錄），點名寫入將被拒絕:", err.message);
 });
 
-// 業務日期：一律以伺服器本地時間為準，避免各裝置系統時間不一致
-const serverToday = () => new Date().toLocaleDateString("sv-SE");
+// 業務日期／時間：固定以 APP_TIMEZONE（預設台北）為準，不依賴各裝置系統時間或主機時區
+const APP_TIMEZONE = process.env.APP_TIMEZONE || "Asia/Taipei";
+const zonedFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: APP_TIMEZONE,
+  year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit",
+  hourCycle: "h23",
+});
+function zonedParts(date = new Date()) {
+  const p = {};
+  zonedFormatter.formatToParts(date).forEach((x) => { p[x.type] = x.value; });
+  return p;
+}
+const serverToday = (date) => {
+  const p = zonedParts(date);
+  return `${p.year}-${p.month}-${p.day}`; // YYYY-MM-DD
+};
+const nowTimestamp = (date) => {
+  const p = zonedParts(date);
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+};
 function isValidDate(str) {
   if (typeof str !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(str)) return false;
   const d = new Date(`${str}T00:00:00Z`);
@@ -192,6 +211,9 @@ app.get("/api/students/all", requireLogin, (req, res) => {
   );
 });
 
+// 伺服器認定的今天（前端用來限制補點名日期上限）
+app.get("/api/server-date", requireLogin, (req, res) => res.json({ date: serverToday() }));
+
 app.get("/api/groups", requireLogin, (req, res) => {
   db.all(
     "SELECT DISTINCT TRIM(group_name) as group_name FROM students WHERE group_name IS NOT NULL ORDER BY group_name ASC",
@@ -212,7 +234,7 @@ app.get("/api/student/search", requireLogin, (req, res) => {
     return res.status(400).json({ success: false, message: "請輸入學號" });
 
   // 取得今日日期 (YYYY-MM-DD)，這裡使用 ISO 格式取日期部分
-  const today = new Date().toLocaleDateString("sv-SE"); // YYYY-MM-DD，使用本地時區
+  const today = serverToday();
 
   const sql = `
     SELECT s.id, s.name, s.roomNumber, s.phoneNumber, s.group_name, a.status as today_status
@@ -348,12 +370,13 @@ app.post("/api/attendance/submit", requireLogin, async (req, res) => {
     // 單一 SQL 敘述一次寫入（不可分割）。同時送出的請求若已被搶先寫入，
     // ON CONFLICT DO NOTHING 會略過該列，再以 this.changes 得知實際寫入筆數。
     const valuesSql = newAttendance
-      .map(() => "(?, ?, ?, ?, ?, datetime('now', 'localtime'))")
+      .map(() => "(?, ?, ?, ?, ?, ?)")
       .join(",");
     const params = [];
+    const createdAt = nowTimestamp();
     newAttendance.forEach((s) => {
       const st = studentMap[s.student_id];
-      params.push(date, s.student_id, st.name, s.status, st.roomNumber);
+      params.push(date, s.student_id, st.name, s.status, st.roomNumber, createdAt);
     });
     const result = await dbExec(
       `INSERT INTO attendance (date, student_id, studentName, status, roomNumber, created_at)
@@ -630,55 +653,96 @@ app.delete("/api/attendance/delete", requireLogin, (req, res) => {
   );
 });
 
-// 匯出 Excel
+// RFC 8187：encodeURIComponent 不會編碼 ' ( ) *，但它們不在 attr-char 允許集合內，需另外百分比編碼
+const encodeRfc5987 = (str) =>
+  encodeURIComponent(str).replace(/['()*]/g, (c) => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+
+// CSV 欄位：一律加雙引號並跳脫內含的雙引號；以 = + - @、換行、Tab 及全形公式符號開頭的文字前綴 ' 避免被試算表當成公式
+function csvCell(value) {
+  let str = value == null ? "" : String(value);
+  if (/^[=+\-@\t\r\n＝＋－＠]/.test(str)) str = "'" + str;
+  return `"${str.replace(/"/g, '""')}"`;
+}
+
+// 匯出（Excel / CSV）：date 可省略，省略時匯出全部日期；不分頁，一次匯出所有符合條件的紀錄
+// format=csv 匯出 CSV，其餘為 Excel
 app.get("/api/attendance/export", requireLogin, (req, res) => {
   const { date, group } = req.query;
-  if (!date) return res.status(400).json({ error: "請選擇日期" });
+  const format = req.query.format === "csv" ? "csv" : "xlsx";
+  if (date && !isValidDate(date)) return res.status(400).json({ error: "日期格式錯誤" });
 
   let query = `SELECT a.date, a.student_id, a.studentName, a.status, s.roomNumber
                FROM attendance a LEFT JOIN students s ON a.student_id = s.id
-               WHERE a.date = ?`;
-  const params = [date];
-  if (group) { query += " AND s.group_name = ?"; params.push(group); }
-  query += " ORDER BY s.roomNumber ASC, a.studentName ASC";
+               WHERE 1=1`;
+  const params = [];
+  if (date)  { query += " AND a.date = ?";                params.push(date); }
+  if (group) { query += " AND TRIM(s.group_name) = ?";    params.push(group.trim()); }
+  query += " ORDER BY a.date ASC, s.roomNumber ASC, a.studentName ASC";
 
   db.all(query, params, async (err, records) => {
     if (err) return res.status(500).json({ error: "查詢失敗" });
+    try {
+      if (records.length === 0) return res.status(404).json({ error: "無可匯出的歷史紀錄" });
 
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet("點名紀錄");
+      // 檔名含群組（中文）時需用 RFC 5987 的 filename*，HTTP header 不能直接放非 ASCII
+      const asciiName = `attendance_${date || "all_" + serverToday()}.${format}`;
+      const fullName = `attendance_${date || "all_" + serverToday()}${group ? "_" + group.trim() : ""}.${format}`;
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeRfc5987(fullName)}`
+      );
 
-    sheet.columns = [
-      { header: "日期", key: "date", width: 14 },
-      { header: "房號", key: "roomNumber", width: 10 },
-      { header: "學生姓名", key: "studentName", width: 14 },
-      { header: "狀態", key: "status", width: 10 },
-    ];
-
-    // 標題列樣式
-    sheet.getRow(1).font = { bold: true };
-    sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF4472C4" } };
-    sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
-
-    records.forEach((r) => {
-      const row = sheet.addRow({
-        date: r.date,
-        roomNumber: r.roomNumber || "N/A",
-        studentName: r.studentName,
-        status: r.status,
-      });
-      if (r.status === "未歸") {
-        row.getCell("status").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF4C4C" } };
-        row.getCell("status").font = { color: { argb: "FFFFFFFF" } };
-      } else if (r.status === "晚歸") {
-        row.getCell("status").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFC000" } };
+      if (format === "csv") {
+        const lines = ["日期,房號,學生姓名,狀態"];
+        records.forEach((r) => {
+          lines.push([r.date, r.roomNumber || "", r.studentName, r.status].map(csvCell).join(","));
+        });
+        res.setHeader("Content-Type", "text/csv; charset=utf-8");
+        return res.send("\uFEFF" + lines.join("\r\n") + "\r\n");
       }
-    });
 
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader("Content-Disposition", `attachment; filename="attendance_${date}.xlsx"`);
-    await workbook.xlsx.write(res);
-    res.end();
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet("點名紀錄");
+
+      sheet.columns = [
+        { header: "日期", key: "date", width: 14 },
+        { header: "房號", key: "roomNumber", width: 10 },
+        { header: "學生姓名", key: "studentName", width: 14 },
+        { header: "狀態", key: "status", width: 10 },
+      ];
+
+      // 標題列樣式
+      sheet.getRow(1).font = { bold: true };
+      sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF4472C4" } };
+      sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+
+      records.forEach((r) => {
+        const row = sheet.addRow({
+          date: r.date,
+          roomNumber: r.roomNumber || "N/A",
+          studentName: r.studentName,
+          status: r.status,
+        });
+        if (r.status === "未歸") {
+          row.getCell("status").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFF4C4C" } };
+          row.getCell("status").font = { color: { argb: "FFFFFFFF" } };
+        } else if (r.status === "晚歸") {
+          row.getCell("status").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFC000" } };
+        }
+      });
+
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      await workbook.xlsx.write(res);
+      res.end();
+    } catch (e) {
+      console.error("❌ 匯出失敗:", e);
+      // 尚未開始傳送就回 500；已開始傳送則中止連線，避免請求懸置
+      if (!res.headersSent) {
+        res.removeHeader("Content-Disposition"); // 錯誤回應不能被當成檔案下載
+        res.status(500).json({ error: "匯出失敗" });
+      }
+      else res.destroy();
+    }
   });
 });
 
@@ -716,7 +780,7 @@ app.post("/api/change-password", requireLogin, (req, res) => {
 
 // 今日各組點名完成狀況
 app.get("/api/attendance/today-summary", requireLogin, (req, res) => {
-  const today = new Date().toLocaleDateString("sv-SE");
+  const today = serverToday();
   db.all(
     `SELECT
        TRIM(s.group_name) AS group_name,
@@ -743,7 +807,7 @@ app.get("/api/attendance/today-summary", requireLogin, (req, res) => {
 
 // 統計概覽（今日/本月數字）
 app.get("/api/stats/overview", requireLogin, (req, res) => {
-  const today = new Date().toLocaleDateString("sv-SE");
+  const today = serverToday();
   const monthPrefix = today.slice(0, 7); // e.g. "2025-09"
 
   const todayQuery = `SELECT status, COUNT(*) as count FROM attendance WHERE date = ? GROUP BY status`;
@@ -775,10 +839,10 @@ app.get("/api/stats/trends", requireLogin, (req, res) => {
   db.all(
     `SELECT date, status, COUNT(*) as count
      FROM attendance
-     WHERE date >= date('now', ?)
+     WHERE date >= date(?, ?)
      GROUP BY date, status
      ORDER BY date ASC`,
-    [`-${days} days`],
+    [serverToday(), `-${days} days`],
     (err, rows) => {
       if (err) return res.status(500).json({ success: false, message: "查詢失敗" });
       res.json({ success: true, data: rows || [] });
@@ -795,11 +859,11 @@ app.get("/api/stats/absentees", requireLogin, (req, res) => {
             COUNT(*) AS absent_count
      FROM attendance a
      LEFT JOIN students s ON a.student_id = s.id
-     WHERE a.status = '未歸' AND a.date >= date('now', ?)
+     WHERE a.status = '未歸' AND a.date >= date(?, ?)
      GROUP BY a.student_id
      ORDER BY absent_count DESC
      LIMIT ?`,
-    [`-${days} days`, limit],
+    [serverToday(), `-${days} days`, limit],
     (err, rows) => {
       if (err) return res.status(500).json({ success: false, message: "查詢失敗" });
       res.json({ success: true, data: rows || [] });
@@ -828,4 +892,4 @@ if (require.main === module) {
   );
 }
 
-module.exports = { app, db };
+module.exports = { app, db, serverToday };

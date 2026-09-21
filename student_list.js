@@ -48,10 +48,10 @@ document.addEventListener("DOMContentLoaded", () => {
           const phoneNumber = student.phoneNumber || "無資料";
           const tr = document.createElement("tr");
           tr.innerHTML = `
-            <td>${student.id}</td>
-            <td>${student.name}</td>
-            <td>${student.roomNumber}</td>
-            <td>${phoneNumber}</td>
+            <td>${escapeHtml(student.id)}</td>
+            <td>${escapeHtml(student.name)}</td>
+            <td>${escapeHtml(student.roomNumber)}</td>
+            <td>${escapeHtml(phoneNumber)}</td>
           `;
           fragment.appendChild(tr);
         });
@@ -83,7 +83,7 @@ document.addEventListener("DOMContentLoaded", () => {
             const student = result.data;
             appendStudentRow(student);
           } else {
-            studentTableBody.innerHTML = `<tr><td colspan='4' style='color: red;'>❌ 找不到學號為 ${id} 的學生</td></tr>`;
+            studentTableBody.innerHTML = `<tr><td colspan='4' style='color: red;'>❌ 找不到學號為 ${escapeHtml(id)} 的學生</td></tr>`;
           }
         })
         .catch((error) => {
@@ -98,15 +98,15 @@ document.addEventListener("DOMContentLoaded", () => {
   function appendStudentRow(student) {
     const phoneNumber = student.phoneNumber || "無資料";
     const groupInfo = student.group_name
-      ? `<br><small style='color: gray'>(${student.group_name})</small>`
+      ? `<br><small style='color: gray'>(${escapeHtml(student.group_name)})</small>`
       : "";
 
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td>${student.id}</td>
-      <td>${student.name}</td>
-      <td>${student.roomNumber}${groupInfo}</td>
-      <td>${phoneNumber}</td>
+      <td>${escapeHtml(student.id)}</td>
+      <td>${escapeHtml(student.name)}</td>
+      <td>${escapeHtml(student.roomNumber)}${groupInfo}</td>
+      <td>${escapeHtml(phoneNumber)}</td>
     `;
     studentTableBody.appendChild(tr);
   }

@@ -34,12 +34,12 @@ process.env.PASSWORD_YUCHENG = YUCHENG_PASS;
 process.env.PASSWORD_DEMING = DEMING_PASS;
 
 // 在設定 env 之後才引用 server
-const { app, db } = require("../server");
+const { app, db, serverToday } = require("../server");
 
 // ═══════════════════════════════════════════════════════════
 // 測試常數
 // ═══════════════════════════════════════════════════════════
-const TODAY = new Date().toLocaleDateString("sv-SE");
+const TODAY = serverToday(); // 與伺服器使用同一個時區（預設台北），不受測試主機時區影響
 const PAST_DATE = "2024-01-15";
 const EXPORT_DATE = "2024-04-01";
 
@@ -556,6 +556,65 @@ describe("Attendance Submit", () => {
     expect(res.status).toBe(400);
   });
 
+  // 讓「預查已通過、寫入前才被別人搶先寫入」的情境可確定地重現（不靠 Promise.all 碰運氣）
+  const injectAfterPrecheck = (rowsToInsert) => {
+    const realAll = db.all.bind(db);
+    let injected = false;
+    return jest.spyOn(db, "all").mockImplementation((sql, params, cb) => {
+      if (!injected && typeof sql === "string" && sql.includes("SELECT student_id FROM attendance WHERE date")) {
+        injected = true;
+        return realAll(sql, params, (err, rows) => {
+          // 預查回傳的是「尚未有人點名」，此時另一個請求搶先寫入
+          let pending = rowsToInsert.length;
+          rowsToInsert.forEach(([id, name, status, room]) =>
+            db.run(
+              "INSERT INTO attendance (date, student_id, studentName, status, roomNumber) VALUES (?, ?, ?, ?, ?)",
+              [TODAY, id, name, status, room],
+              () => { if (--pending === 0) cb(err, rows); }
+            )
+          );
+        });
+      }
+      return realAll(sql, params, cb);
+    });
+  };
+
+  test("寫入衝突分支：預查後部分學生被搶先寫入 → 只寫入其餘、回報 inserted/skipped、不覆蓋", async () => {
+    const spy = injectAfterPrecheck([["S001", "張小明", "未歸", "1231A"]]);
+    let res;
+    try {
+      res = await adminAgent.post("/api/attendance/submit").send(makePayload(["S001", "S002"], "在寢"));
+    } finally {
+      spy.mockRestore();
+    }
+    expect(res.status).toBe(200);
+    expect(res.body.inserted).toBe(1);
+    expect(res.body.skipped).toBe(1);
+    const s1 = await dbGet("SELECT status FROM attendance WHERE student_id = 'S001' AND date = ?", [TODAY]);
+    const s2 = await dbGet("SELECT status FROM attendance WHERE student_id = 'S002' AND date = ?", [TODAY]);
+    expect(s1.status).toBe("未歸"); // 先寫入者保留
+    expect(s2.status).toBe("在寢");
+  });
+
+  test("寫入衝突分支：預查後全部被搶先寫入 → 409（不誤報成功）", async () => {
+    const spy = injectAfterPrecheck([
+      ["S001", "張小明", "未歸", "1231A"],
+      ["S002", "李小華", "未歸", "1232B"],
+    ]);
+    let res;
+    try {
+      res = await adminAgent.post("/api/attendance/submit").send(makePayload(["S001", "S002"], "在寢"));
+    } finally {
+      spy.mockRestore();
+    }
+    expect(res.status).toBe(409);
+    expect(res.body.inserted).toBe(0);
+    const count = await dbGet("SELECT COUNT(*) as c FROM attendance WHERE date = ?", [TODAY]);
+    expect(count.c).toBe(2);
+    const rows = await dbGet("SELECT COUNT(*) as c FROM attendance WHERE date = ? AND status = '在寢'", [TODAY]);
+    expect(rows.c).toBe(0); // 沒有任何一筆被後者覆蓋
+  });
+
   test("樓長也可以送出點名", async () => {
     const res = await demingAgent.post("/api/attendance/submit").send(makePayload(["S001"]));
     expect(res.status).toBe(200);
@@ -792,13 +851,27 @@ describe("Attendance Clear", () => {
 // 9. Excel 匯出
 // ═══════════════════════════════════════════════════════════
 describe("Attendance Export", () => {
-  beforeAll(() =>
-    dbRun(
+  // 共用資料在 setup 建立，讓每個案例都能單獨執行：
+  // EXPORT_DATE 1 筆 + 2024-05-01 / 2024-05-02 各 60 筆 = 121 筆
+  beforeAll(async () => {
+    await dbRun(
       "INSERT INTO attendance (date, student_id, studentName, status, roomNumber) VALUES (?, ?, ?, ?, ?)",
       [EXPORT_DATE, "S001", "張小明", "在寢", "1231A"]
-    )
-  );
+    );
+    for (const date of ["2024-05-01", "2024-05-02"]) {
+      for (let i = 1; i <= 60; i++) {
+        await dbRun(
+          "INSERT INTO attendance (date, student_id, studentName, status, roomNumber) VALUES (?, ?, ?, ?, ?)",
+          [date, `E${i}`, `測試${i}`, "在寢", "9999"]
+        );
+      }
+    }
+  });
   afterAll(clearAttendance);
+  // 個別案例額外插入的日期在案例結束後清掉，避免影響其他案例的筆數
+  afterEach(() =>
+    dbRun("DELETE FROM attendance WHERE date IN ('2024-06-01', '2024-07-01', '2024-08-01')")
+  );
 
   test("GET /api/attendance/export?date=X - 回傳 xlsx 檔案", async () => {
     const res = await adminAgent.get(`/api/attendance/export?date=${EXPORT_DATE}`);
@@ -807,9 +880,121 @@ describe("Attendance Export", () => {
     expect(res.headers["content-disposition"]).toMatch(/attendance_.*\.xlsx/);
   });
 
-  test("GET /api/attendance/export - 缺少 date → 400", async () => {
-    const res = await adminAgent.get("/api/attendance/export");
+  const parseXlsx = async (res) => {
+    const ExcelJS = require("exceljs");
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(res.body);
+    return wb.worksheets[0];
+  };
+  const binaryParser = (res, cb) => {
+    const chunks = [];
+    res.on("data", (d) => chunks.push(d));
+    res.on("end", () => cb(null, Buffer.concat(chunks)));
+  };
+
+  test("GET /api/attendance/export - 不選日期 → 一次匯出全部（不受每頁 50 筆限制）", async () => {
+    const res = await adminAgent.get("/api/attendance/export").buffer().parse(binaryParser);
+    expect(res.status).toBe(200);
+    expect(res.headers["content-disposition"]).toMatch(/attendance_all_.*\.xlsx/);
+    const sheet = await parseXlsx(res);
+    expect(sheet.rowCount - 1).toBe(121); // 扣掉標題列
+  });
+
+  test("GET /api/attendance/export - 只選日期 → 只匯出該日", async () => {
+    const res = await adminAgent.get("/api/attendance/export?date=2024-05-01").buffer().parse(binaryParser);
+    const sheet = await parseXlsx(res);
+    expect(sheet.rowCount - 1).toBe(60);
+  });
+
+  test("GET /api/attendance/export - 日期格式錯誤 → 400", async () => {
+    const res = await adminAgent.get("/api/attendance/export?date=abc");
     expect(res.status).toBe(400);
+  });
+
+  test("CSV：不選日期 → 一次匯出全部（含 BOM、標題列 + 121 筆）", async () => {
+    const res = await adminAgent.get("/api/attendance/export?format=csv");
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/text\/csv/);
+    expect(res.text.charCodeAt(0)).toBe(0xfeff);
+    // 注意：String.trim() 會把開頭的 BOM 一併去掉，所以只移除結尾換行
+    const lines = res.text.replace(/\r\n$/, "").split("\r\n");
+    expect(lines[0]).toBe("\uFEFF日期,房號,學生姓名,狀態");
+    expect(lines.length - 1).toBe(121);
+  });
+
+  test("CSV：欄位含雙引號、逗號、公式開頭時正確跳脫", async () => {
+    await dbRun(
+      "INSERT INTO attendance (date, student_id, studentName, status, roomNumber) VALUES (?, ?, ?, ?, ?)",
+      ["2024-06-01", "Q1", 'He said "hi", ok', "在寢", "1"]
+    );
+    await dbRun(
+      "INSERT INTO attendance (date, student_id, studentName, status, roomNumber) VALUES (?, ?, ?, ?, ?)",
+      ["2024-06-01", "Q2", "=SUM(1+1)", "未歸", "2"]
+    );
+    const res = await adminAgent.get("/api/attendance/export?format=csv&date=2024-06-01");
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('"He said ""hi"", ok"');
+    expect(res.text).toContain(`"'=SUM(1+1)"`); // 前綴 ' 避免被試算表當成公式
+    expect(res.text.trim().split("\r\n").length).toBe(3); // 標題 + 2 筆
+  });
+
+  test("匯出：群組篩選 + 中文群組名稱檔名（RFC 5987）", async () => {
+    const res = await adminAgent.get(
+      `/api/attendance/export?format=csv&date=${EXPORT_DATE}&group=${encodeURIComponent(GROUP_MALE_3F)}`
+    );
+    expect(res.status).toBe(200);
+    const disposition = res.headers["content-disposition"];
+    expect(disposition).toMatch(/filename="attendance_2024-04-01\.csv"/);
+    expect(disposition).toContain("filename*=UTF-8''" + encodeURIComponent(`attendance_${EXPORT_DATE}_${GROUP_MALE_3F}.csv`));
+    expect(res.text.trim().split("\r\n").length).toBe(2); // 只有 S001 那一筆
+  });
+
+  test("匯出：檔名 filename* 也編碼 ' ( ) * 等 RFC 8187 不允許的字元", async () => {
+    const weird = "A'組(夜)*";
+    await dbRun(
+      "INSERT OR REPLACE INTO students (id, name, roomNumber, phoneNumber, group_name) VALUES ('W1', '特殊', '5', '0', ?)",
+      [weird]
+    );
+    await dbRun(
+      "INSERT INTO attendance (date, student_id, studentName, status, roomNumber) VALUES (?, 'W1', '特殊', '在寢', '5')",
+      ["2024-07-01"]
+    );
+    const res = await adminAgent.get(
+      `/api/attendance/export?format=csv&date=2024-07-01&group=${encodeURIComponent(weird)}`
+    );
+    expect(res.status).toBe(200);
+    const m = res.headers["content-disposition"].match(/filename\*=UTF-8''(\S+)$/);
+    expect(m[1]).not.toMatch(/['()*]/);
+    expect(decodeURIComponent(m[1])).toBe(`attendance_2024-07-01_${weird}.csv`);
+    await dbRun("DELETE FROM students WHERE id = 'W1'");
+  });
+
+  test("CSV：換行或全形符號開頭的欄位也加單引號防公式注入", async () => {
+    await dbRun(
+      "INSERT INTO attendance (date, student_id, studentName, status, roomNumber) VALUES (?, 'F1', ?, '在寢', '1')",
+      ["2024-08-01", "\n=1+1"]
+    );
+    await dbRun(
+      "INSERT INTO attendance (date, student_id, studentName, status, roomNumber) VALUES (?, 'F2', ?, '在寢', '1')",
+      ["2024-08-01", "＝1+1"]
+    );
+    const res = await adminAgent.get("/api/attendance/export?format=csv&date=2024-08-01");
+    expect(res.text).toContain(`"'\n=1+1"`);
+    expect(res.text).toContain(`"'＝1+1"`);
+  });
+
+  test("匯出：篩選後沒有資料 → 404（不下載空檔案）", async () => {
+    const res = await adminAgent.get(
+      `/api/attendance/export?format=csv&date=${EXPORT_DATE}&group=${encodeURIComponent(GROUP_FEMALE_1F)}`
+    );
+    expect(res.status).toBe(404);
+    expect(res.body.error).toMatch(/無可匯出/);
+  });
+
+  test("GET /api/server-date - 回傳伺服器認定的今天", async () => {
+    const res = await adminAgent.get("/api/server-date");
+    expect(res.status).toBe(200);
+    expect(res.body.date).toBe(TODAY);
   });
 });
 
