@@ -52,6 +52,54 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
   else console.log("✅ 已連接到 SQLite 資料庫");
 });
 
+// ── 點名資料表遷移 ─────────────────────────────
+// 1) 新增 created_at（實際送出時間，用來分辨當天點名與事後補點名）
+// 2) 建立 (date, student_id) 唯一索引，資料庫層級防止同一學生同一天重複點名
+// 若既有資料已有重複紀錄，索引會建立失敗；此時拒絕寫入點名，直到重複資料被清理
+const dbAll = (sql, params = []) =>
+  new Promise((resolve, reject) =>
+    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)))
+  );
+const dbExec = (sql, params = []) =>
+  new Promise((resolve, reject) =>
+    db.run(sql, params, function (err) {
+      if (err) reject(err);
+      else resolve(this);
+    })
+  );
+
+let attendanceSchemaReady = null;
+function ensureAttendanceSchema() {
+  if (!attendanceSchemaReady) {
+    attendanceSchemaReady = (async () => {
+      const cols = await dbAll("PRAGMA table_info(attendance)");
+      if (cols.length === 0) throw new Error("no such table: attendance");
+      if (!cols.some((c) => c.name === "created_at"))
+        await dbExec("ALTER TABLE attendance ADD COLUMN created_at TEXT");
+      await dbExec(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_date_student ON attendance(date, student_id)"
+      );
+    })().catch((err) => {
+      attendanceSchemaReady = null; // 下次請求重試（例如重複資料清理之後）
+      throw err;
+    });
+  }
+  return attendanceSchemaReady;
+}
+ensureAttendanceSchema().catch((err) => {
+  if (!/no such table/i.test(err.message))
+    console.warn("⚠️ 點名資料表遷移失敗（可能已有重複紀錄），點名寫入將被拒絕:", err.message);
+});
+
+// 業務日期：一律以伺服器本地時間為準，避免各裝置系統時間不一致
+const serverToday = () => new Date().toLocaleDateString("sv-SE");
+function isValidDate(str) {
+  if (typeof str !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(str)) return false;
+  const d = new Date(`${str}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === str;
+}
+const VALID_STATUSES = ["在寢", "未歸", "晚歸"];
+
 const users = [
   { username: "xm2801", password: process.env.PASSWORD_XM2801 || "admin", display_name: "德銘宿舍羅老師" },
   { username: "12130340", password: process.env.PASSWORD_YUCHENG || "Yucheng0803", display_name: "林煜晟（系統管理）" },
@@ -243,65 +291,90 @@ app.get("/api/attendance/dates", requireLogin, (req, res) => {
   );
 });
 
-app.post("/api/attendance/submit", requireLogin, (req, res) => {
+app.post("/api/attendance/submit", requireLogin, async (req, res) => {
   const { date, group, attendanceData } = req.body;
   if (!date || !group || !attendanceData)
     return res.status(400).json({ error: "資料不完整" });
 
+  // ── 輸入驗證 ──
+  if (!isValidDate(date))
+    return res.status(400).json({ error: "日期格式錯誤，須為有效的 YYYY-MM-DD" });
+  if (date > serverToday())
+    return res.status(400).json({ error: "不可對未來日期點名" });
+  if (typeof group !== "string" || !group.trim())
+    return res.status(400).json({ error: "群組名稱錯誤" });
+  if (!Array.isArray(attendanceData) || attendanceData.length === 0)
+    return res.status(400).json({ error: "沒有學生資料可提交" });
+  for (const s of attendanceData) {
+    if (!s || typeof s.student_id !== "string" || !s.student_id)
+      return res.status(400).json({ error: "學號資料錯誤" });
+    if (!VALID_STATUSES.includes(s.status))
+      return res.status(400).json({ error: "點名狀態錯誤" });
+  }
   const studentIds = attendanceData.map((s) => s.student_id);
-  const placeholders = studentIds.map(() => "?").join(",");
+  if (new Set(studentIds).size !== studentIds.length)
+    return res.status(400).json({ error: "同一學生重複出現在點名資料中" });
 
-  db.serialize(() => {
-    db.all(
-      `SELECT student_id FROM attendance WHERE date = ? AND student_id IN (${placeholders})`,
-      [date, ...studentIds],
-      (err, rows) => {
-        if (err) return res.status(500).json({ error: "查詢失敗" });
+  try {
+    await ensureAttendanceSchema();
+  } catch (err) {
+    console.error("❌ 點名資料表未就緒:", err.message);
+    return res.status(500).json({ error: "資料庫存在重複點名紀錄，請先清理後再點名" });
+  }
 
-        const alreadyMarked = new Set(rows.map((r) => r.student_id));
-        const newAttendance = attendanceData.filter(
-          (s) => !alreadyMarked.has(s.student_id)
-        );
-
-        if (newAttendance.length === 0)
-          return res.json({ success: true, message: "所有學生均已點名" });
-
-        const newIds = newAttendance.map((s) => s.student_id);
-        const newPlaceholders = newIds.map(() => "?").join(",");
-
-        // 一次查詢取得所有房號，避免巢狀非同步 race condition
-        db.all(
-          `SELECT id, roomNumber FROM students WHERE id IN (${newPlaceholders})`,
-          newIds,
-          (err, studentRows) => {
-            if (err) return res.status(500).json({ error: "查詢失敗" });
-
-            const roomMap = {};
-            studentRows.forEach((r) => { roomMap[r.id] = r.roomNumber; });
-
-            const stmt = db.prepare(
-              "INSERT INTO attendance (date, student_id, studentName, status, roomNumber) VALUES (?, ?, ?, ?, ?)"
-            );
-            let hasErrors = false;
-
-            newAttendance.forEach((s) => {
-              const roomNum = roomMap[s.student_id] || "N/A";
-              if (!roomMap[s.student_id]) hasErrors = true;
-              stmt.run(date, s.student_id, s.studentName, s.status, roomNum);
-            });
-
-            stmt.finalize((err) => {
-              if (err) return res.status(500).json({ error: "寫入失敗" });
-              res.json({
-                success: true,
-                message: hasErrors ? "點名成功(部分無房號)" : "點名成功",
-              });
-            });
-          }
-        );
-      }
+  try {
+    // 學生必須存在且屬於此群組（同時取得房號）
+    const placeholders = studentIds.map(() => "?").join(",");
+    const studentRows = await dbAll(
+      `SELECT id, name, roomNumber FROM students WHERE id IN (${placeholders}) AND TRIM(group_name) = ?`,
+      [...studentIds, group.trim()]
     );
-  });
+    if (studentRows.length !== studentIds.length)
+      return res.status(400).json({ error: "部分學生不存在或不屬於此群組" });
+    const studentMap = {};
+    studentRows.forEach((r) => { studentMap[r.id] = r; });
+
+    // 已點名者略過（部分點名的群組仍可補點其餘學生）
+    const markedRows = await dbAll(
+      `SELECT student_id FROM attendance WHERE date = ? AND student_id IN (${placeholders})`,
+      [date, ...studentIds]
+    );
+    const alreadyMarked = new Set(markedRows.map((r) => r.student_id));
+    const newAttendance = attendanceData.filter((s) => !alreadyMarked.has(s.student_id));
+
+    if (newAttendance.length === 0)
+      return res.status(409).json({ success: false, error: "所選學生在該日期均已點名，請勿重複點名", date, inserted: 0 });
+
+    // 單一 SQL 敘述一次寫入（不可分割）。同時送出的請求若已被搶先寫入，
+    // ON CONFLICT DO NOTHING 會略過該列，再以 this.changes 得知實際寫入筆數。
+    const valuesSql = newAttendance
+      .map(() => "(?, ?, ?, ?, ?, datetime('now', 'localtime'))")
+      .join(",");
+    const params = [];
+    newAttendance.forEach((s) => {
+      const st = studentMap[s.student_id];
+      params.push(date, s.student_id, st.name, s.status, st.roomNumber);
+    });
+    const result = await dbExec(
+      `INSERT INTO attendance (date, student_id, studentName, status, roomNumber, created_at)
+       VALUES ${valuesSql}
+       ON CONFLICT(date, student_id) DO NOTHING`,
+      params
+    );
+
+    if (result.changes === 0)
+      return res.status(409).json({ success: false, error: "所選學生在該日期均已點名，請勿重複點名", date, inserted: 0 });
+
+    res.json({
+      success: true,
+      message: "點名成功",
+      inserted: result.changes,
+      skipped: studentIds.length - result.changes,
+    });
+  } catch (err) {
+    console.error("❌ 點名寫入失敗:", err.message);
+    res.status(500).json({ error: "寫入失敗" });
+  }
 });
 
 // **🆕 新增：清除所有點名紀錄 API (只有管理員可執行)**
@@ -470,21 +543,39 @@ app.post(
   }
 );
 
-// 檢查某日某群組是否已有點名紀錄
-app.get("/api/attendance/check", requireLogin, (req, res) => {
-  const { date, group } = req.query;
-  if (!date || !group) return res.status(400).json({ error: "缺少參數" });
+// 檢查某日某群組的點名狀態（date 省略時以伺服器今天為準）
+// completed：全員都已點名；marked_ids：已點名的學號（部分點名時前端只列出尚未點名者）
+app.get("/api/attendance/check", requireLogin, async (req, res) => {
+  const { group } = req.query;
+  const date = req.query.date || serverToday();
+  if (!group) return res.status(400).json({ error: "缺少參數" });
+  if (!isValidDate(date)) return res.status(400).json({ error: "日期格式錯誤" });
+  if (date > serverToday()) return res.status(400).json({ error: "不可對未來日期點名" });
 
-  db.get(
-    `SELECT COUNT(*) as count FROM attendance a
-     LEFT JOIN students s ON a.student_id = s.id
-     WHERE a.date = ? AND TRIM(s.group_name) = ?`,
-    [date, group.trim()],
-    (err, row) => {
-      if (err) return res.status(500).json({ error: "查詢失敗" });
-      res.json({ exists: row.count > 0, count: row.count });
-    }
-  );
+  try {
+    // 單一查詢同時取得名冊與點名狀態，確保 total 與 marked 來自同一份快照
+    const rows = await dbAll(
+      `SELECT s.id, EXISTS(
+         SELECT 1 FROM attendance a WHERE a.student_id = s.id AND a.date = ?
+       ) AS is_marked
+       FROM students s WHERE TRIM(s.group_name) = ?`,
+      [date, group.trim()]
+    );
+    const markedIds = rows.filter((r) => r.is_marked).map((r) => r.id);
+    const total = rows.length;
+    const marked = markedIds.length;
+    res.json({
+      date,
+      exists: marked > 0,
+      count: marked,
+      total,
+      marked,
+      completed: total > 0 && marked >= total,
+      marked_ids: markedIds,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "查詢失敗" });
+  }
 });
 
 // 查詢單一學生的歷史點名紀錄（最近 30 天）

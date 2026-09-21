@@ -376,15 +376,21 @@ describe("Attendance Submit", () => {
     expect(res.status).toBe(400);
   });
 
-  test("【修正驗證】所有學生均已點名時重送 → success（非 409 錯誤）", async () => {
+  test("防止重複點名：所有學生均已點名時重送 → 409 且不新增紀錄", async () => {
     // 第一次送出
     await adminAgent.post("/api/attendance/submit").send(makePayload());
+    const before = await dbGet("SELECT COUNT(*) as c FROM attendance WHERE date = ?", [TODAY]);
 
-    // 第二次送出（舊 bug：回傳 409，前端顯示失敗）
-    const res = await adminAgent.post("/api/attendance/submit").send(makePayload());
-    expect(res.status).toBe(200);
-    expect(res.body.success).toBe(true);
-    expect(res.body.message).toMatch(/已點名/);
+    // 第二次送出（即使狀態不同也不可覆蓋或新增）
+    const payload = makePayload();
+    payload.attendanceData.forEach((s) => { s.status = "未歸"; });
+    const res = await adminAgent.post("/api/attendance/submit").send(payload);
+    expect(res.status).toBe(409);
+    expect(res.body.success).toBe(false);
+    expect(res.body.error).toMatch(/均已點名/);
+
+    const after = await dbGet("SELECT COUNT(*) as c FROM attendance WHERE date = ?", [TODAY]);
+    expect(after.c).toBe(before.c);
   });
 
   test("部分學生已點名 → 只插入新的，舊的不重複", async () => {
@@ -398,6 +404,156 @@ describe("Attendance Submit", () => {
 
     const count = await dbGet("SELECT COUNT(*) as c FROM attendance WHERE date = ?", [TODAY]);
     expect(count.c).toBe(2); // 不是 3
+  });
+
+  test("驗證：無效的 status → 400 且不寫入", async () => {
+    const res = await adminAgent.post("/api/attendance/submit").send(makePayload(["S001"], "亂寫"));
+    expect(res.status).toBe(400);
+    const count = await dbGet("SELECT COUNT(*) as c FROM attendance");
+    expect(count.c).toBe(0);
+  });
+
+  test("驗證：status 為 null → 400", async () => {
+    const payload = makePayload(["S001"]);
+    payload.attendanceData[0].status = null;
+    const res = await adminAgent.post("/api/attendance/submit").send(payload);
+    expect(res.status).toBe(400);
+  });
+
+  test("驗證：空的 attendanceData → 400", async () => {
+    const res = await adminAgent.post("/api/attendance/submit").send({
+      date: TODAY, group: GROUP_MALE_3F, attendanceData: [],
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test("驗證：同一 payload 重複學號 → 400 且不寫入", async () => {
+    const payload = makePayload(["S001", "S001"]);
+    const res = await adminAgent.post("/api/attendance/submit").send(payload);
+    expect(res.status).toBe(400);
+    const count = await dbGet("SELECT COUNT(*) as c FROM attendance");
+    expect(count.c).toBe(0);
+  });
+
+  test("驗證：學生不屬於指定群組 → 400 且不寫入", async () => {
+    const res = await adminAgent.post("/api/attendance/submit").send(makePayload(["S001", "S003"]));
+    expect(res.status).toBe(400);
+    const count = await dbGet("SELECT COUNT(*) as c FROM attendance");
+    expect(count.c).toBe(0);
+  });
+
+  test("驗證：日期格式錯誤（含空白、非法日期）→ 400", async () => {
+    for (const bad of [`${TODAY} `, "2026-02-30", "2026/09/21", "abc"]) {
+      const payload = makePayload(["S001"]);
+      payload.date = bad;
+      const res = await adminAgent.post("/api/attendance/submit").send(payload);
+      expect(res.status).toBe(400);
+    }
+    const count = await dbGet("SELECT COUNT(*) as c FROM attendance");
+    expect(count.c).toBe(0);
+  });
+
+  test("驗證：未來日期 → 400", async () => {
+    const payload = makePayload(["S001"]);
+    payload.date = "2999-01-01";
+    const res = await adminAgent.post("/api/attendance/submit").send(payload);
+    expect(res.status).toBe(400);
+  });
+
+  test("補點名：過去日期可正常送出，並記錄實際送出時間 created_at", async () => {
+    const payload = makePayload(["S001", "S002"]);
+    payload.date = "2024-03-01";
+    const res = await adminAgent.post("/api/attendance/submit").send(payload);
+    expect(res.status).toBe(200);
+    const row = await dbGet("SELECT date, created_at FROM attendance WHERE student_id = 'S001'");
+    expect(row.date).toBe("2024-03-01");
+    expect(row.created_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+    expect(row.created_at.slice(0, 10)).toBe(TODAY); // 送出時間是今天，點名日期是過去
+  });
+
+  test("資料庫層級：(date, student_id) 唯一索引確實存在，且直接重複寫入會被拒絕", async () => {
+    await adminAgent.post("/api/attendance/submit").send(makePayload(["S001"]));
+    const idx = await dbGet(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_attendance_date_student'"
+    );
+    expect(idx).toBeTruthy();
+    await expect(
+      dbRun(
+        "INSERT INTO attendance (date, student_id, studentName, status, roomNumber) VALUES (?, 'S001', 'x', '在寢', 'x')",
+        [TODAY]
+      )
+    ).rejects.toThrow(/UNIQUE/i);
+  });
+
+  test("併發：同一群組同時送出兩次 → 一次成功、一次 409，且只有一份紀錄", async () => {
+    const [r1, r2] = await Promise.all([
+      adminAgent.post("/api/attendance/submit").send(makePayload(["S001", "S002"], "在寢")),
+      demingAgent.post("/api/attendance/submit").send(makePayload(["S001", "S002"], "未歸")),
+    ]);
+    expect([r1.status, r2.status].sort()).toEqual([200, 409]);
+    const count = await dbGet("SELECT COUNT(*) as c FROM attendance WHERE date = ?", [TODAY]);
+    expect(count.c).toBe(2);
+    // 兩位學生的狀態必須全部來自同一次成功的請求，不會混合
+    const rows = await new Promise((resolve, reject) =>
+      db.all("SELECT DISTINCT status FROM attendance WHERE date = ?", [TODAY], (e, r) => (e ? reject(e) : resolve(r)))
+    );
+    expect(rows.length).toBe(1);
+  });
+
+  test("部分點名後補點其餘學生 → 回報 inserted / skipped", async () => {
+    await adminAgent.post("/api/attendance/submit").send(makePayload(["S001"], "未歸"));
+    const res = await adminAgent.post("/api/attendance/submit").send(makePayload(["S001", "S002"], "在寢"));
+    expect(res.status).toBe(200);
+    expect(res.body.inserted).toBe(1);
+    expect(res.body.skipped).toBe(1);
+    // 已點名的 S001 不可被覆蓋
+    const s1 = await dbGet("SELECT status FROM attendance WHERE student_id = 'S001' AND date = ?", [TODAY]);
+    expect(s1.status).toBe("未歸");
+  });
+
+  test("check：部分點名 → completed:false，並列出 marked_ids；補齊後 completed:true", async () => {
+    const q = `/api/attendance/check?group=${encodeURIComponent(GROUP_MALE_3F)}`;
+
+    let res = await adminAgent.get(q);
+    expect(res.body.date).toBe(TODAY); // 不帶 date 時以伺服器今天為準
+    expect(res.body.completed).toBe(false);
+    expect(res.body.marked).toBe(0);
+
+    await adminAgent.post("/api/attendance/submit").send(makePayload(["S001"]));
+    res = await adminAgent.get(q);
+    expect(res.body.exists).toBe(true);
+    expect(res.body.completed).toBe(false);
+    expect(res.body.marked).toBe(1);
+    expect(res.body.total).toBe(2);
+    expect(res.body.marked_ids).toEqual(["S001"]);
+
+    await adminAgent.post("/api/attendance/submit").send(makePayload(["S001", "S002"]));
+    res = await adminAgent.get(q);
+    expect(res.body.completed).toBe(true);
+  });
+
+  test("409 訊息誠實：只送已點名的學生時，不宣稱整組完成", async () => {
+    await adminAgent.post("/api/attendance/submit").send(makePayload(["S001"]));
+    const res = await adminAgent.post("/api/attendance/submit").send(makePayload(["S001"]));
+    expect(res.status).toBe(409);
+    expect(res.body.error).not.toMatch(/此群組/);
+    // 實際上 S002 尚未點名，check 也必須回報未完成
+    const chk = await adminAgent.get(`/api/attendance/check?group=${encodeURIComponent(GROUP_MALE_3F)}`);
+    expect(chk.body.completed).toBe(false);
+  });
+
+  test("check：未來日期 → 400", async () => {
+    const res = await adminAgent.get(
+      `/api/attendance/check?date=2999-01-01&group=${encodeURIComponent(GROUP_MALE_3F)}`
+    );
+    expect(res.status).toBe(400);
+  });
+
+  test("check：日期格式錯誤 → 400", async () => {
+    const res = await adminAgent.get(
+      `/api/attendance/check?date=bad&group=${encodeURIComponent(GROUP_MALE_3F)}`
+    );
+    expect(res.status).toBe(400);
   });
 
   test("樓長也可以送出點名", async () => {
@@ -490,6 +646,7 @@ describe("Attendance Query", () => {
     expect(res.status).toBe(200);
     expect(res.body.exists).toBe(true);
     expect(res.body.count).toBe(2);
+    expect(res.body.completed).toBe(true); // 該群組 2 人皆已點名
   });
 
   test("GET /api/attendance/check - 該群組無紀錄 → exists: false", async () => {

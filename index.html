@@ -343,11 +343,19 @@
       }
 
       // ── 載入群組 ──────────────────────────────────
+      let loadGroupsSeq = 0;
       function loadGroups() {
+        // 立即清空舊卡片，並忽略過期回應，避免切換日期時點到上一個日期的卡片
+        const seq = ++loadGroupsSeq;
+        const groupContainer = document.getElementById("group-container");
+        groupContainer.textContent = "載入中...";
         fetch("/api/groups")
-          .then((response) => response.json())
+          .then((response) => {
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.json();
+          })
           .then((groups) => {
-            const groupContainer = document.getElementById("group-container");
+            if (seq !== loadGroupsSeq) return;
             groupContainer.innerHTML = "";
 
             if (groups.length === 0) {
@@ -359,37 +367,58 @@
               const card = document.createElement("div");
               card.className = "group-card-simple";
 
-              if (selectedDate) {
-                // 補點名模式：先檢查是否已有紀錄
-                card.innerHTML = `<h3>${group}</h3><p>檢查中...</p>`;
-                fetch(`/api/attendance/check?date=${encodeURIComponent(selectedDate)}&group=${encodeURIComponent(group)}`)
-                  .then((r) => r.json())
-                  .then((result) => {
-                    if (result.exists) {
-                      card.innerHTML = `<h3>${group}</h3><p style="color:#27ae60; font-weight:bold;">✅ 已完成點名</p>`;
-                      card.style.opacity = "0.6";
-                      card.style.cursor = "default";
-                      card.onclick = () => alert(`「${group}」在 ${selectedDate} 已完成點名（共 ${result.count} 筆紀錄）`);
-                    } else {
-                      card.innerHTML = `<h3>${group}</h3><p style="color:#e67e22;">⚠️ 尚未點名，點擊補點</p>`;
-                      card.onclick = () => {
-                        location.href = `attendance.html?group=${encodeURIComponent(group)}&date=${encodeURIComponent(selectedDate)}`;
-                      };
-                    }
-                  })
-                  .catch(() => {
-                    card.innerHTML = `<h3>${group}</h3><p>無法確認狀態</p>`;
-                  });
-              } else {
-                // 今日點名模式：直接進入
-                card.innerHTML = `<h3>${group}</h3><p>點擊進入</p>`;
-                card.onclick = () => {
-                  location.href = `attendance.html?group=${encodeURIComponent(group)}`;
-                };
-              }
+              // 補點名（指定日期）與今日點名都先向伺服器確認點名狀態
+              // 今日模式不傳 date，由伺服器決定今天（不依賴裝置系統時間）
+              const isMakeup = !!selectedDate;
+              const targetDate = selectedDate; // 檢查與導頁使用同一份日期快照
+              const enterUrl = isMakeup
+                ? `attendance.html?group=${encodeURIComponent(group)}&date=${encodeURIComponent(targetDate)}`
+                : `attendance.html?group=${encodeURIComponent(group)}`;
+              const checkUrl =
+                `/api/attendance/check?group=${encodeURIComponent(group)}` +
+                (isMakeup ? `&date=${encodeURIComponent(targetDate)}` : "");
+
+              card.textContent = "";
+              const title = document.createElement("h3");
+              title.textContent = group;
+              const statusLine = document.createElement("p");
+              statusLine.textContent = "檢查中...";
+              card.append(title, statusLine);
+
+              fetch(checkUrl)
+                .then((r) => {
+                  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                  return r.json();
+                })
+                .then((result) => {
+                  if (result.completed) {
+                    statusLine.style.cssText = "color:#27ae60; font-weight:bold;";
+                    statusLine.textContent = "✅ 已完成點名";
+                    card.style.opacity = "0.6";
+                    card.style.cursor = "default";
+                    card.onclick = () => alert(`「${group}」在 ${result.date} 已完成點名（共 ${result.marked} 筆紀錄）`);
+                  } else if (result.marked > 0) {
+                    statusLine.style.cssText = "color:#e67e22;";
+                    statusLine.textContent = `⚠️ 已點 ${result.marked}/${result.total} 人，點擊補點其餘`;
+                    card.onclick = () => { location.href = enterUrl; };
+                  } else {
+                    if (isMakeup) statusLine.style.cssText = "color:#e67e22;";
+                    statusLine.textContent = isMakeup ? "⚠️ 尚未點名，點擊補點" : "點擊進入";
+                    card.onclick = () => { location.href = enterUrl; };
+                  }
+                })
+                .catch(() => {
+                  statusLine.textContent = "無法確認狀態，請重新整理";
+                  card.style.opacity = "0.6";
+                  card.style.cursor = "default";
+                });
 
               groupContainer.appendChild(card);
             });
+          })
+          .catch(() => {
+            if (seq !== loadGroupsSeq) return;
+            groupContainer.textContent = "無法載入群組，請重新整理";
           });
       }
 
