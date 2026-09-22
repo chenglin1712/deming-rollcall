@@ -994,6 +994,32 @@ table tbody tr:hover { background: var(--blue-light); }
 }
 .btn-inline-delete:hover { background: #d63027; }
 
+.btn-inline-cancel {
+  padding: 4px 10px;
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  margin-right: 4px;
+  transition: background .15s;
+}
+.btn-inline-cancel:hover { background: var(--border-light); }
+
+.inline-edit-input {
+  width: 100%;
+  min-width: 80px;
+  box-sizing: border-box;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-size: 0.85rem;
+  font-family: var(--font);
+}
+.inline-edit-input:focus { border-color: var(--blue); outline: none; }
+
 /* =========================================
    Forms (general – add_student, change_password)
    ========================================= */

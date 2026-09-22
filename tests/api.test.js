@@ -34,7 +34,7 @@ process.env.PASSWORD_YUCHENG = YUCHENG_PASS;
 process.env.PASSWORD_DEMING = DEMING_PASS;
 
 // 在設定 env 之後才引用 server
-const { app, db, serverToday } = require("../server");
+const { app, db, importDb, serverToday } = require("../server");
 
 // ═══════════════════════════════════════════════════════════
 // 測試常數
@@ -270,6 +270,7 @@ describe("Students API", () => {
     expect(ids).toContain("S002");
     expect(res.body[0]).toHaveProperty("roomNumber");
     expect(res.body[0]).toHaveProperty("phoneNumber");
+    expect(res.body[0]).toHaveProperty("group_name");
   });
 
   test("GET /api/students/all - 缺少 group 參數 → 400", async () => {
@@ -1147,6 +1148,349 @@ describe("Students Import", () => {
     const res = await adminAgent.post("/api/students/import");
     expect(res.status).toBe(400);
     expect(res.body.message).toMatch(/未上傳/);
+  });
+
+  test("略過報告：缺欄位、性別打字錯誤、學號重複的列會被略過並回報原因", async () => {
+    const buf = await makeExcelBuffer([
+      ["男", "G001", "正常生", "3231", "A", "0900000001"], // 正常
+      ["男", "", "缺學號", "3231", "B", ""],               // 缺學號
+      ["男生", "G002", "性別變體", "3231", "C", ""],        // 「男生」屬於可正規化的常見變體，視為有效資料
+      ["男", "G001", "學號重複", "3232", "A", ""],          // 學號與第一筆重複
+    ]);
+    const res = await adminAgent
+      .post("/api/students/import")
+      .attach("file", Buffer.from(buf), "students.xlsx");
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.imported).toBe(2); // G001 正常生、G002 性別打錯（"男生"可正規化為男，視為有效）
+    expect(res.body.skipped.length).toBe(2); // 缺學號、學號重複
+
+    const reasons = res.body.skipped.map((s) => s.reason);
+    expect(reasons.some((r) => r.includes("缺少欄位"))).toBe(true);
+    expect(reasons.some((r) => r.includes("學號重複"))).toBe(true);
+    expect(res.body.message).toMatch(/另有 2 筆資料.*被略過/);
+
+    const g1 = await dbGet("SELECT name FROM students WHERE id = 'G001'");
+    expect(g1.name).toBe("正常生"); // 重複學號的第二筆不會覆蓋第一筆
+  });
+
+  test("略過報告：性別欄位無法辨識（非男/女/常見變體）", async () => {
+    const buf = await makeExcelBuffer([
+      ["男", "H001", "有效生", "4231", "A", ""],
+      ["外星人", "H002", "性別錯誤", "4231", "B", ""],
+    ]);
+    const res = await adminAgent
+      .post("/api/students/import")
+      .attach("file", Buffer.from(buf), "students.xlsx");
+
+    expect(res.status).toBe(200);
+    expect(res.body.imported).toBe(1);
+    expect(res.body.skipped.length).toBe(1);
+    expect(res.body.skipped[0].id).toBe("H002");
+    expect(res.body.skipped[0].reason).toMatch(/性別欄位.*無法辨識/);
+  });
+
+  test("全部資料列都無法匯入 → 400，且舊名冊不受影響", async () => {
+    const before = await dbGet("SELECT COUNT(*) as c FROM students");
+
+    const buf = await makeExcelBuffer([["", "", "", "", "", ""]]);
+    const res = await adminAgent
+      .post("/api/students/import")
+      .attach("file", Buffer.from(buf), "students.xlsx");
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+    expect(Array.isArray(res.body.skipped)).toBe(true);
+
+    const after = await dbGet("SELECT COUNT(*) as c FROM students");
+    expect(after.c).toBe(before.c); // 沒有任何資料被清除或寫入
+  });
+
+  test("全部資料列都是非空白的壞資料 → 400，並回報每一列的略過原因", async () => {
+    const before = await dbGet("SELECT COUNT(*) as c FROM students");
+
+    const buf = await makeExcelBuffer([
+      ["", "", "缺學號缺性別", "5001", "A", ""],
+      ["外星人", "BAD002", "性別錯誤", "5002", "B", ""],
+    ]);
+    const res = await adminAgent
+      .post("/api/students/import")
+      .attach("file", Buffer.from(buf), "students.xlsx");
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+    expect(res.body.message).toMatch(/所有資料列均無法匯入/);
+    expect(res.body.skipped.length).toBe(2);
+    expect(res.body.skippedCount).toBe(2);
+    expect(res.body.skippedTruncated).toBe(false);
+
+    const after = await dbGet("SELECT COUNT(*) as c FROM students");
+    expect(after.c).toBe(before.c); // 全部失敗時，舊名冊完全不受影響
+  });
+
+  test("匯入交易使用獨立連線：交易期間失敗回滾時，不會波及其他請求的寫入", async () => {
+    // 這個測試直接證明「匯入交易不能跟其他 API 共用同一條 db 連線」這件事：
+    // 讓匯入在寫入學生資料時失敗（觸發 ROLLBACK），並在「同時」透過主連線 db
+    // 送出一筆完全無關的點名寫入。若兩者共用一條連線，這筆無關寫入可能被併入
+    // 匯入的交易、跟著一起被撤銷；用獨立連線後，SQLite 的鎖機制會確保它是
+    // 真正獨立的一次寫入——結果只會是「乾淨成功」或「明確地因鎖定而失敗」，
+    // 兩種都可以接受，但唯獨不能是「回報成功、資料卻被默默清掉」。
+    const buf = await makeExcelBuffer([
+      ["男", "TX001", "交易測試甲", "5231", "A", ""],
+    ]);
+
+    const realRun = importDb.run.bind(importDb);
+    let triggered = false;
+    const spy = jest.spyOn(importDb, "run").mockImplementation(function (sql, params, cb) {
+      if (!triggered && typeof sql === "string" && sql.startsWith("INSERT INTO students")) {
+        triggered = true;
+        return cb(new Error("模擬匯入寫入失敗")); // 立刻失敗，不等待任何東西，避免和下面的並行寫入互相卡死
+      }
+      return realRun(sql, params, cb);
+    });
+
+    let importRes;
+    let unrelatedErr = null;
+    try {
+      [importRes] = await Promise.all([
+        adminAgent.post("/api/students/import").attach("file", Buffer.from(buf), "students.xlsx"),
+        dbRun(
+          "INSERT INTO attendance (date, student_id, studentName, status, roomNumber) VALUES (?, 'TXCHECK', '不相關的請求', '在寢', 'X')",
+          [PAST_DATE]
+        ).catch((e) => { unrelatedErr = e; }),
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(importRes.status).toBe(500);
+    expect(importRes.body.message).toMatch(/未被更動/);
+
+    // 匯入本身確實整個回滾：TX001 不存在
+    const imported = await dbGet("SELECT * FROM students WHERE id = 'TX001'");
+    expect(imported).toBeUndefined();
+
+    // 關鍵斷言：無關的點名寫入不能被匯入交易的 ROLLBACK 靜默波及——
+    // 要嘛清楚寫入成功，要嘛因鎖定明確地失敗（回報 busy/locked），不會是「消失但沒人知道」
+    if (unrelatedErr) {
+      expect(unrelatedErr.message).toMatch(/locked|busy/i);
+    } else {
+      const unrelated = await dbGet("SELECT * FROM attendance WHERE student_id = 'TXCHECK'");
+      expect(unrelated).toBeTruthy();
+    }
+    await dbRun("DELETE FROM attendance WHERE student_id = 'TXCHECK'").catch(() => {});
+  });
+
+  test("Excel 儲存格解析：富文字、公式（用快取結果）、房號為數字 0、日期誤填都能正確處理", async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Sheet1");
+    ws.addRow(["性別", "學號", "姓名", "房號", "床", "電話"]);
+
+    // 富文字姓名
+    const r1 = ws.addRow(["男", "RT001", null, "6001", "A", ""]);
+    r1.getCell(3).value = { richText: [{ text: "王" }, { font: { bold: true }, text: "小明" }] };
+
+    // 公式學號，帶快取結果（試算表軟體存檔時通常會存這份結果）
+    const r2 = ws.addRow([null, null, "公式測試", "6002", "B", ""]);
+    r2.getCell(1).value = "男";
+    r2.getCell(2).value = { formula: '"F"&"T002"', result: "FT002" };
+
+    // 房號為數字 0：以前的寫法會把 0 當成空值而略過
+    ws.addRow(["女", "ZERO001", "零房號測試", 0, "C", ""]);
+
+    // 姓名欄位誤填成日期型別：不應噴例外，也不該變成 "[object Object]"
+    const r4 = ws.addRow(["男", "DATE001", null, "6004", "D", ""]);
+    r4.getCell(3).value = new Date("2024-01-01T00:00:00Z");
+
+    const buf = await wb.xlsx.writeBuffer();
+    const res = await adminAgent
+      .post("/api/students/import")
+      .attach("file", Buffer.from(buf), "cells.xlsx");
+
+    expect(res.status).toBe(200);
+    expect(res.body.imported).toBe(4);
+    expect(res.body.skipped.length).toBe(0);
+
+    const richText = await dbGet("SELECT name FROM students WHERE id = 'RT001'");
+    expect(richText.name).toBe("王小明");
+
+    const formula = await dbGet("SELECT id, name FROM students WHERE id = 'FT002'");
+    expect(formula).toBeTruthy();
+    expect(formula.name).toBe("公式測試");
+
+    const zero = await dbGet("SELECT roomNumber FROM students WHERE id = 'ZERO001'");
+    expect(zero.roomNumber).toBe("0C"); // 房號 0 + 床號 C，數字 0 沒有被當成空值
+
+    const dateCell = await dbGet("SELECT name FROM students WHERE id = 'DATE001'");
+    expect(dateCell.name).not.toMatch(/object/i); // 不是 "[object Object]"
+    expect(dateCell.name).toBe("2024-01-01");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+// 11. 學生資料編輯／刪除（單筆）
+// ═══════════════════════════════════════════════════════════
+describe("Students Edit / Delete", () => {
+  beforeEach(async () => {
+    await dbRun("DELETE FROM students");
+    for (const s of TEST_STUDENTS) {
+      await dbRun(
+        "INSERT OR REPLACE INTO students (id, name, roomNumber, phoneNumber, group_name) VALUES (?, ?, ?, ?, ?)",
+        [s.id, s.name, s.roomNumber, s.phoneNumber, s.group_name]
+      );
+    }
+  });
+  afterAll(async () => {
+    await dbRun("DELETE FROM students");
+    for (const s of TEST_STUDENTS) {
+      await dbRun(
+        "INSERT OR REPLACE INTO students (id, name, roomNumber, phoneNumber, group_name) VALUES (?, ?, ?, ?, ?)",
+        [s.id, s.name, s.roomNumber, s.phoneNumber, s.group_name]
+      );
+    }
+  });
+
+  test("PATCH /api/students/:id - 管理員可修改姓名／房號／電話／群組", async () => {
+    const res = await adminAgent.patch("/api/students/S001").send({
+      name: "張小明（改）",
+      roomNumber: "9999Z",
+      phoneNumber: "0911111111",
+      group_name: GROUP_FEMALE_1F,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+
+    const row = await dbGet("SELECT * FROM students WHERE id = 'S001'");
+    expect(row.name).toBe("張小明（改）");
+    expect(row.roomNumber).toBe("9999Z");
+    expect(row.phoneNumber).toBe("0911111111");
+    expect(row.group_name).toBe(GROUP_FEMALE_1F);
+    expect(row.id).toBe("S001"); // 學號不可被修改
+  });
+
+  test("PATCH /api/students/:id - 電話留空時預設為「無資料」", async () => {
+    const res = await adminAgent.patch("/api/students/S001").send({
+      name: "張小明", roomNumber: "1231A", phoneNumber: "", group_name: GROUP_MALE_3F,
+    });
+    expect(res.status).toBe(200);
+    const row = await dbGet("SELECT phoneNumber FROM students WHERE id = 'S001'");
+    expect(row.phoneNumber).toBe("無資料");
+  });
+
+  test("PATCH /api/students/:id - 姓名／房號／群組為空 → 400", async () => {
+    const res = await adminAgent.patch("/api/students/S001").send({
+      name: "", roomNumber: "1231A", phoneNumber: "", group_name: GROUP_MALE_3F,
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test("PATCH /api/students/:id - 學生不存在 → 404", async () => {
+    const res = await adminAgent.patch("/api/students/NOPE").send({
+      name: "x", roomNumber: "x", phoneNumber: "", group_name: GROUP_MALE_3F,
+    });
+    expect(res.status).toBe(404);
+  });
+
+  test("PATCH /api/students/:id - 帶正確 version 可正常更新，version 會遞增", async () => {
+    const before = await dbGet("SELECT version FROM students WHERE id = 'S001'");
+    expect(before.version).toBe(1); // 匯入／建立時的初始版本
+
+    const res = await adminAgent.patch("/api/students/S001").send({
+      name: "張小明", roomNumber: "1231A", phoneNumber: "", group_name: GROUP_MALE_3F,
+      version: before.version,
+    });
+    expect(res.status).toBe(200);
+
+    const after = await dbGet("SELECT version FROM students WHERE id = 'S001'");
+    expect(after.version).toBe(before.version + 1);
+  });
+
+  test("樂觀鎖：兩位管理員同時編輯同一位學生，後送出的會收到 409，不會悄悄覆蓋先送出的內容", async () => {
+    const original = await dbGet("SELECT * FROM students WHERE id = 'S001'");
+
+    // 管理員 A 讀取畫面（version = original.version），改電話並先送出、成功
+    const resA = await adminAgent.patch("/api/students/S001").send({
+      name: original.name, roomNumber: original.roomNumber, phoneNumber: "0911111111",
+      group_name: original.group_name, version: original.version,
+    });
+    expect(resA.status).toBe(200);
+
+    // 管理員 B 也是讀取「同一個舊畫面」（version 一樣是 original.version），改姓名後送出
+    // 這個 version 現在已經過期了（A 已經改過），應該被擋下來，而不是把 A 剛改的電話蓋掉
+    const resB = await adminAgent.patch("/api/students/S001").send({
+      name: "被B改的姓名", roomNumber: original.roomNumber, phoneNumber: original.phoneNumber,
+      group_name: original.group_name, version: original.version,
+    });
+    expect(resB.status).toBe(409);
+    expect(resB.body.message).toMatch(/已被其他人更新/);
+    expect(resB.body.current).toBeTruthy(); // 回傳目前最新的資料，方便前端重新載入
+
+    // 最終資料要是 A 改的（電話），不能是 B 想改但被拒絕的姓名
+    const final = await dbGet("SELECT * FROM students WHERE id = 'S001'");
+    expect(final.phoneNumber).toBe("0911111111");
+    expect(final.name).toBe(original.name); // B 的姓名沒有生效
+  });
+
+  test("PATCH /api/students/:id - 沒帶 version 時維持原本行為（不做樂觀鎖檢查）", async () => {
+    const res = await adminAgent.patch("/api/students/S002").send({
+      name: "李小華", roomNumber: "1232B", phoneNumber: "", group_name: GROUP_MALE_3F,
+    });
+    expect(res.status).toBe(200); // 沒有 version 欄位一樣可以更新成功，向後相容
+  });
+
+  test("PATCH /api/students/:id - version 不是整數 → 400", async () => {
+    const res = await adminAgent.patch("/api/students/S001").send({
+      name: "x", roomNumber: "x", phoneNumber: "", group_name: GROUP_MALE_3F, version: "abc",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test("GET /api/students/all 與 GET /api/student/search 都會回傳 version 欄位", async () => {
+    const listRes = await adminAgent.get(`/api/students/all?group=${encodeURIComponent(GROUP_MALE_3F)}`);
+    expect(typeof listRes.body[0].version).toBe("number");
+
+    const searchRes = await adminAgent.get("/api/student/search?id=S001");
+    expect(typeof searchRes.body.data.version).toBe("number");
+  });
+
+  test("PATCH /api/students/:id - 樓長無法修改 → 403", async () => {
+    const res = await demingAgent.patch("/api/students/S001").send({
+      name: "x", roomNumber: "x", phoneNumber: "", group_name: GROUP_MALE_3F,
+    });
+    expect(res.status).toBe(403);
+    const row = await dbGet("SELECT name FROM students WHERE id = 'S001'");
+    expect(row.name).toBe("張小明"); // 未被更動
+  });
+
+  test("DELETE /api/students/:id - 管理員可刪除，且不影響該學生的歷史點名紀錄", async () => {
+    await dbRun(
+      "INSERT INTO attendance (date, student_id, studentName, status, roomNumber) VALUES (?, 'S001', '張小明', '在寢', '1231A')",
+      [PAST_DATE]
+    );
+
+    const res = await adminAgent.delete("/api/students/S001");
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+
+    const student = await dbGet("SELECT * FROM students WHERE id = 'S001'");
+    expect(student).toBeUndefined();
+
+    const history = await dbGet("SELECT * FROM attendance WHERE student_id = 'S001'");
+    expect(history).toBeTruthy(); // 歷史點名紀錄仍保留
+    await dbRun("DELETE FROM attendance WHERE student_id = 'S001'");
+  });
+
+  test("DELETE /api/students/:id - 學生不存在 → 404", async () => {
+    const res = await adminAgent.delete("/api/students/NOPE");
+    expect(res.status).toBe(404);
+  });
+
+  test("DELETE /api/students/:id - 樓長無法刪除 → 403", async () => {
+    const res = await demingAgent.delete("/api/students/S001");
+    expect(res.status).toBe(403);
+    const row = await dbGet("SELECT * FROM students WHERE id = 'S001'");
+    expect(row).toBeTruthy(); // 未被刪除
   });
 });
 
